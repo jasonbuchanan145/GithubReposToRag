@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: qwen
+  labels:
+    {{- include "rag-demo.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app: qwen
+  ports:
+    - port: 8000
+      targetPort: 8000
+      name: http

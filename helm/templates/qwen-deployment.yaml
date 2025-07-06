@@ -1,0 +1,27 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qwen
+  labels:
+    {{- include "rag-demo.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: qwen
+  template:
+    metadata:
+      labels:
+        app: qwen
+    spec:
+      containers:
+        - name: qwen
+          image: ghcr.io/yourname/qwen-vllm:{{ .Values.image.tag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: MODEL_NAME
+              value: {{ .Values.qwen.model | quote }}
+          ports:
+            - containerPort: 8000
+              name: http
+          resources: {}

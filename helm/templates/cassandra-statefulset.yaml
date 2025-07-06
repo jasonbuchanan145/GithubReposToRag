@@ -2,8 +2,10 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: cassandra
+  labels:
+    {{- include "rag-demo.labels" . | nindent 4 }}
 spec:
-  serviceName: cassandra
+  serviceName: cassandra  # headless service created automatically
   replicas: {{ .Values.cassandra.replicaCount }}
   selector:
     matchLabels:
@@ -13,24 +15,48 @@ spec:
       labels:
         app: cassandra
     spec:
+      terminationGracePeriodSeconds: 180
       containers:
         - name: cassandra
           image: apache/cassandra:5.0
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - containerPort: 9042
+              name: cql
           env:
             - name: CASSANDRA_CLUSTER_NAME
               value: rag-demo
             - name: CASSANDRA_DC
               value: dc1
+            - name: CASSANDRA_ENDPOINT_SNITCH
+              value: GossipingPropertyFileSnitch
+          resources:
+            {{- toYaml .Values.cassandra.resources | nindent 12 }}
           volumeMounts:
             - name: data
               mountPath: /var/lib/cassandra
+            - name: cassandra-init
+              mountPath: /docker-entrypoint-initdb.d
+          lifecycle:
+            postStart:
+              exec:
+                command:
+                  - /bin/bash
+                  - -c
+                  - |
+                    echo "Waiting for Cassandra to accept CQL...";
+                    until cqlsh -e 'DESC KEYSPACES' localhost 9042; do sleep 5; done;
+                    echo "Applying schema.cql";
+                    cqlsh -f /docker-entrypoint-initdb.d/schema.cql localhost 9042;
+      volumes:
+        - name: cassandra-init
+          configMap:
+            name: cassandra-init-scripts
   volumeClaimTemplates:
     - metadata:
         name: data
       spec:
-        accessModes: [ "ReadWriteOnce" ]
+        accessModes: ["ReadWriteOnce"]
         resources:
           requests:
             storage: 10Gi
