@@ -1,0 +1,28 @@
+# Default values for helm.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+# This will set the replicaset count more information can be found here: https://kubernetes.io/docs/concepts/workloads/controllers/replicaset/
+replicaCount: 1
+
+cassandra:
+  replicaCount: 3
+  resources:
+    limits:
+      memory: "4Gi"
+      cpu: "1"
+
+qwen:
+  model: "Qwen/Qwen2.5-7B-Chat-Int8"
+  gpu: false            # set true + GPU resources if minikube supports it
+
+ingest-job:
+  image: jasonbuchanan145/rag-ingest
+
+ragapi:
+  image: jasonbuchanan/rag-api
+# This is for the secretes for pulling an image from a private repository more information can be found here: https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/
+imagePullSecrets: []
+# This is to override the chart name.
+nameOverride: ""
+fullnameOverride: ""

@@ -1,0 +1,25 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ingest-repos
+  labels:
+    {{- include "rag-demo.labels" . | nindent 4 }}
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        job-name: ingest-repos
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: ingest
+          image: {{ .Values.ingestjob.image }}:latest
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: github-token
+                  key: token
+          command: ["python", "-m", "scripts.ingest_repo"]

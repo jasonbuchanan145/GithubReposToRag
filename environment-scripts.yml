@@ -1,0 +1,15 @@
+name: rag-demo-services
+channels: [conda-forge, defaults, pytorch]
+dependencies:
+  - python=3.11
+  - pip
+  - cassandra-driver=3.28.*
+  # vLLM + (optional) GPU support
+  - pytorch=2.3.*           # CPU build by default
+  # - pytorch-cuda=12.1      # ← uncomment if GPUs available
+  - libgcc-ng
+  - pip:
+      - vllm==0.4.3
+      - fastapi==0.111.0
+      - uvicorn[standard]==0.29.0
+      - pydantic==2.7.1
