@@ -6,7 +6,7 @@
 replicaCount: 1
 
 cassandra:
-  replicaCount: 3
+  replicaCount: 1
   resources:
     limits:
       memory: "4Gi"
@@ -21,6 +21,7 @@ ingest-job:
 
 ragapi:
   image: jasonbuchanan/rag-api
+
 # This is for the secretes for pulling an image from a private repository more information can be found here: https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/
 imagePullSecrets: []
 # This is to override the chart name.

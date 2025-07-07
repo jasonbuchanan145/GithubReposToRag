@@ -9,15 +9,13 @@ minikube addons enable ingress
 # Stage 2 – build images
 (minikube -p minikube docker-env) | Invoke-Expression
 Push-Location scripts
-docker build -t rag-ingest:dev -f Dockerfile .
+docker build -t rag-ingest:latest -f Dockerfile .
 Pop-Location
 Push-Location services/rag_api
-docker build -t rag-api:dev -f Dockerfile .
+docker build -t rag-api:latest -f Dockerfile .
 Pop-Location
-# Build vLLM image (assumes Dockerfile.vllm exists at repo root)
-docker build -t qwen-vllm:dev -f Dockerfile.vllm .
 Push-Location frontend/nextjs-app
-docker build -t rag-frontend:dev -f Dockerfile.frontend .
+docker build -t rag-frontend:latest -f Dockerfile.frontend .
 Pop-Location
 
 # Stage 3 – deploy

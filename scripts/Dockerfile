@@ -15,4 +15,4 @@ COPY scripts/ /app/scripts/
 COPY cassandra/schema.cql /app/cassandra/schema.cql   # handy for local tests
 
 # ---------- entrypoint ----------
-ENTRYPOINT ["conda", "run", "--no-capture-output", "-n", "rag-demo-scripts", "python", "-m", "scripts.ingest_repo"]
+ENTRYPOINT ["conda", "run", "--no-capture-output", "-n", "rag-demo", "python", "-m", "scripts.ingest_repos"]
