@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: qwen
-          image: ghcr.io/yourname/qwen-vllm:{{ .Values.image.tag }}
+          image: vllm/vllm-openai:latest
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
             - name: MODEL_NAME

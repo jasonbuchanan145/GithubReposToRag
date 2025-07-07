@@ -1,4 +1,4 @@
-name: rag-demo-service
+name: rag-demo-services
 channels: [conda-forge, defaults, pytorch]
 dependencies:
   - python=3.11

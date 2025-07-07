@@ -14,7 +14,7 @@ spec:
       restartPolicy: Never
       containers:
         - name: ingest
-          image: ghcr.io/yourname/rag-ingest:{{ .Values.image.tag }}
+          image: {{ .Values.ingestjob.image }}:latest
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
             - name: GITHUB_TOKEN
