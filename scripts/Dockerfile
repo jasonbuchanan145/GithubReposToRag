@@ -12,7 +12,7 @@ SHELL ["conda", "run", "--no-capture-output", "-n", "rag-demo-scripts", "/bin/ba
 # ---------- app code ----------
 WORKDIR /app
 COPY scripts/ /app/scripts/
-COPY cassandra/schema.cql /app/cassandra/schema.cql   # handy for local tests
+COPY cassandra/schema.cql /app/cassandra/schema.cql
 
 # ---------- entrypoint ----------
 ENTRYPOINT ["conda", "run", "--no-capture-output", "-n", "rag-demo", "python", "-m", "scripts.ingest_repos"]

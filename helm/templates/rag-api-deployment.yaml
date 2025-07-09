@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: rag-api
-          image: jasonbuchanan145/rag-api:latest
+          image: rag-api:latest
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
             - name: QWEN_ENDPOINT

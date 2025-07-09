@@ -1,0 +1,25 @@
+# ───── universal ignores ─────
+.git
+**/__pycache__
+**/*.py[cod]
+*.log
+
+# ───── dependencies & local builds ─────
+**/node_modules
+**/.next
+**/.venv
+**/dist
+**/build
+minikube    # the local cluster’s data if it lives inside the repo
+
+# ───── keep the files the images need ─────
+!scripts/**
+!services/**
+!frontend/nextjs-app/**
+!cassandra/**
+!environment-scripts.yml
+!environment-service.yml
+
+**/*.sock
+**/*.socket
+**/*.pipe

@@ -6,6 +6,9 @@
 replicaCount: 1
 
 cassandra:
+  image:
+    repository: cassandra
+    tag: 5.0-jammy
   replicaCount: 1
   resources:
     limits:
@@ -15,9 +18,10 @@ cassandra:
 qwen:
   model: "Qwen/Qwen2.5-7B-Chat-Int8"
   gpu: false            # set true + GPU resources if minikube supports it
-
-ingest-job:
-  image: jasonbuchanan145/rag-ingest
+image:
+  pullPolicy: IfNotPresent
+ingestjob:
+  image: rag-ingest
 
 ragapi:
   image: jasonbuchanan/rag-api

@@ -56,6 +56,26 @@ def ingest_repo(repo_url: str):
                 ),
             )
 
+    def fetch_repos(login: str):
+        after = None
+        headers = {"Authorization": f"Bearer {GH_TOKEN}"}
+        while True:
+            payload = {"query": query, "variables": {"login": login, "after": after}}
+            resp = requests.post("https://api.github.com/graphql", json=payload, headers=headers, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()["data"]["user"]["repositories"]
+            for node in data["nodes"]:
+                if not node["isArchived"]:
+                    yield node["cloneUrl"]
+            if not data["pageInfo"]["hasNextPage"]:
+                break
+            after = data["pageInfo"]["endCursor"]
+
+    repos = list(fetch_repos(GITHUB_USER))
+
+    for r in repos:
+        ingest_repo(r)
+
 if __name__ == "__main__":
     # --- GitHub repo discovery via GraphQL ---
     GITHUB_USER = "jasonbuchanan145"
@@ -76,23 +96,3 @@ if __name__ == "__main__":
       }
     }
     """
-
-    def fetch_repos(login: str):
-        after = None
-        headers = {"Authorization": f"Bearer {GH_TOKEN}"}
-        while True:
-            payload = {"query": query, "variables": {"login": login, "after": after}}
-            resp = requests.post("https://api.github.com/graphql", json=payload, headers=headers, timeout=30)
-            resp.raise_for_status()
-            data = resp.json()["data"]["user"]["repositories"]
-            for node in data["nodes"]:
-                if not node["isArchived"]:
-                    yield node["cloneUrl"]
-            if not data["pageInfo"]["hasNextPage"]:
-                break
-            after = data["pageInfo"]["endCursor"]
-
-    repos = list(fetch_repos(GITHUB_USER))
-
-    for r in repos:
-        ingest_repo(r)
