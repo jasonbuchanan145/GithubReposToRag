@@ -9,5 +9,5 @@ To do this after you have minikube turned on run
 
 ```shell
 kubectl -n rag create secret generic github-token \
-  --from-literal=token=ghp_xxxxxxxxxxxxxxxxxxx
+  --from-literal=token=_insert_token_here_
 ```

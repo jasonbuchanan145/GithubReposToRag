@@ -2,24 +2,34 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: ingest-repos
-  labels:
-    {{- include "rag-demo.labels" . | nindent 4 }}
 spec:
-  backoffLimit: 2
   template:
-    metadata:
-      labels:
-        job-name: ingest-repos
     spec:
       restartPolicy: Never
+      ## --- wait here -----------------------------------------------------
+      initContainers:
+        - name: wait-for-cassandra
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              echo "⏳ waiting for Cassandra ..."
+              until nc -z {{ printf "%s-cassandra" .Release.Name }} 9042; do
+                sleep 5
+              done
+              echo "✅ Cassandra is ready"
+      ## -------------------------------------------------------------------
+
       containers:
         - name: ingest
-          image: {{ .Values.ingestjob.image }}:latest
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
-          env:
-            - name: GITHUB_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: github-token
-                  key: token
-          command: ["python", "-m", "scripts.ingest_repo"]
+          image: "{{ .Values.ingestjob.image }}"
+          command:
+            - "conda"
+            - "run"
+            - "--no-capture-output"
+            - "-n"
+            - "rag-demo"
+            - "python"
+            - "-m"
+            - "scripts.ingest_repos"

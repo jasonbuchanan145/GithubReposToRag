@@ -1,9 +1,0 @@
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: cassandra-init-scripts
-  labels:
-    {{- include "rag-demo.labels" . | nindent 4 }}
-data:
-  schema.cql: |
-{{ (.Files.Get "cassandra/schema.cql") | indent 4 }}

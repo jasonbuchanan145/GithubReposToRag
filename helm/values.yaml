@@ -6,14 +6,27 @@
 replicaCount: 1
 
 cassandra:
+  dbUser:
+    password: "testyMcTesterson"
+    forcePassword: true
   image:
     repository: cassandra
     tag: 5.0-jammy
-  replicaCount: 1
+    pullPolicy: IfNotPresent         # ← pick a real tag Bitnami publishes
+  auth:
+    enabled: false         # disable until you wire up credentials
   resources:
     limits:
-      memory: "4Gi"
-      cpu: "1"
+      cpu: 1
+      memory: 4Gi
+    requests:
+      cpu: 1
+      memory: 4Gi
+  service:
+    ports:
+      cql: 9042
+  initDBConfigMap: cassandra-init-scripts
+  # storageClass, persistence size, etc. go here
 
 qwen:
   model: "Qwen/Qwen2.5-7B-Chat-Int8"
