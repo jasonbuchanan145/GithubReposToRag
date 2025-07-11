@@ -15,12 +15,24 @@ spec:
         app: rag-api
     spec:
       containers:
+
         - name: rag-api
           image: rag-api:latest
+
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
             - name: QWEN_ENDPOINT
               value: "http://qwen:8000"
+            - name: CASSANDRA_HOST
+              value: "{{ .Release.Name }}-cassandra"
+            - name: CASSANDRA_PORT
+              value: "9042"
+            - name: CASSANDRA_USERNAME
+              value: "{{ .Values.cassandra.auth.username }}"
+            - name: CASSANDRA_PASSWORD
+              value: "{{ .Values.cassandra.auth.password }}"
+            - name: CASSANDRA_KEYSPACE
+              value: "vector_store"
           ports:
             - containerPort: 8000
               name: http

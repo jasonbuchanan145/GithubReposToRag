@@ -30,23 +30,34 @@ Get-ChildItem -Path "." -Recurse -File | ForEach-Object {
 }
 
 # Build images with better error handling
-Write-Host "Building Docker images..."
+Write-Host "Building and loading Docker images into Minikube..." -ForegroundColor Yellow
 try {
-  Write-Host "Building rag-ingest..."
-#  docker build -t rag-ingest:latest -f scripts/Dockerfile .
-  Write-Host "Building rag-api..."
-#  docker build -t rag-api:latest -f services/rag_api/Dockerfile .
-  Write-Host "Building rag-frontend..."
+  # Switch to minikube's Docker environment
+  Write-Host "Switching to minikube Docker environment..." -ForegroundColor Green
+  & minikube -p minikube docker-env | Invoke-Expression
+
+  Write-Host "Building rag-ingest..." -ForegroundColor Green
+  docker build -t localhost:5000/rag-ingest:latest -f scripts/Dockerfile .
+
+  # Tag the image with no registry prefix for local use
+  docker tag localhost:5000/rag-ingest:latest rag-ingest:latest
+
+  Write-Host "Building rag-api..." -ForegroundColor Green
+  # Uncomment when API Dockerfile is ready
+  # docker build -t localhost:5000/rag-api:latest -f services/rag_api/Dockerfile .
+  # docker tag localhost:5000/rag-api:latest rag-api:latest
 
   # Try to build frontend with a smaller context
-#  Push-Location frontend/nextjs-app
-#  docker build -t rag-frontend:latest -f Dockerfile .
-#  Pop-Location
+  # Write-Host "Building rag-frontend..." -ForegroundColor Green
+  # Push-Location frontend/nextjs-app
+  # docker build -t localhost:5000/rag-frontend:latest -f Dockerfile .
+  # docker tag localhost:5000/rag-frontend:latest rag-frontend:latest
+  # Pop-Location
 
-  Write-Host "All Docker images built successfully!" -ForegroundColor Green
+  Write-Host "All Docker images built successfully and loaded into Minikube!" -ForegroundColor Green
 } catch {
   Write-Host "Docker build failed: $($_.Exception.Message)" -ForegroundColor Red
-  Write-Host "Continuing without frontend image - you can build it separately later" -ForegroundColor Yellow
+  Write-Host "Continuing without some images - you can build them separately later" -ForegroundColor Yellow
 }
 
 # Stage 3 – deploy

@@ -37,6 +37,23 @@ spec:
       containers:
         - name: ingest
           image: "{{ .Values.ingestjob.image }}"
+          imagePullPolicy: {{ .Values.ingestjob.imagePullPolicy | default "IfNotPresent" }}
+          env:
+            - name: CASSANDRA_HOST
+              value: "{{ .Release.Name }}-cassandra"
+            - name: CASSANDRA_PORT
+              value: "9042"
+            - name: CASSANDRA_USERNAME
+              value: "{{ .Values.cassandra.auth.username }}"
+            - name: CASSANDRA_PASSWORD
+              value: "{{ .Values.cassandra.auth.password }}"
+            - name: CASSANDRA_KEYSPACE
+              value: "vector_store"
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: github-token
+                  key: token
           command:
             - "conda"
             - "run"

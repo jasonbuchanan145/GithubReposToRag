@@ -7,6 +7,7 @@ replicaCount: 1
 
 cassandra:
   dbUser:
+    user: "RagUser"
     password: "testyMcTesterson"
     forcePassword: true
   image:
@@ -74,10 +75,12 @@ qwen:
 image:
   pullPolicy: IfNotPresent
 ingestjob:
-  image: rag-ingest
+  image: localhost:5000/rag-ingest:latest
+  imagePullPolicy: Never
 
 ragapi:
   image: jasonbuchanan/rag-api
+  imagePullPolicy: IfNotPresent
 
 # This is for the secretes for pulling an image from a private repository more information can be found here: https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/
 imagePullSecrets: []

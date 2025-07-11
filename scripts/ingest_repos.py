@@ -5,14 +5,56 @@ from base64 import b64encode
 from typing import Iterable
 
 from cassandra.cluster import Cluster
+from cassandra.auth import PlainTextAuthProvider
 from sentence_transformers import SentenceTransformer  # e5-small-v2
 
 EMBED_MODEL = os.getenv("EMBED_MODEL", "intfloat/e5-small-v2")
-CHUNK_SIZE   = 1024 * 4  # bytes
+CHUNK_SIZE = 1024 * 4  # bytes
 
-cluster = Cluster(["cassandra"], port=9042)
-session = cluster.connect("rag")
-model   = SentenceTransformer(EMBED_MODEL)
+# Get Cassandra connection details from environment variables
+CASSANDRA_HOST = os.getenv("CASSANDRA_HOST", "cassandra")
+CASSANDRA_PORT = int(os.getenv("CASSANDRA_PORT", "9042"))
+CASSANDRA_USERNAME = os.getenv("CASSANDRA_USERNAME", "cassandra")
+CASSANDRA_PASSWORD = os.getenv("CASSANDRA_PASSWORD", "testyMcTesterson")
+CASSANDRA_KEYSPACE = os.getenv("CASSANDRA_KEYSPACE", "vector_store")
+
+# Configure authentication provider
+auth_provider = PlainTextAuthProvider(username=CASSANDRA_USERNAME, password=CASSANDRA_PASSWORD)
+
+# Connect to Cassandra without specifying keyspace first
+cluster = Cluster(
+    [CASSANDRA_HOST], 
+    port=CASSANDRA_PORT,
+    auth_provider=auth_provider
+)
+
+# Create a session without keyspace to setup schema if needed
+setup_session = cluster.connect()
+
+# Create keyspace if it doesn't exist
+print(f"Ensuring keyspace {CASSANDRA_KEYSPACE} exists...")
+setup_session.execute(
+    f"""CREATE KEYSPACE IF NOT EXISTS {CASSANDRA_KEYSPACE} 
+    WITH replication = {{'class': 'SimpleStrategy', 'replication_factor': 1}};"""
+)
+
+# Create table if it doesn't exist
+print("Creating embeddings table if it doesn't exist...")
+setup_session.execute(
+    f"""CREATE TABLE IF NOT EXISTS {CASSANDRA_KEYSPACE}.embeddings (
+        id TEXT PRIMARY KEY,
+        content TEXT,
+        embedding BLOB,
+        metadata MAP<TEXT, TEXT>
+    );"""
+)
+
+# Now connect with the keyspace
+session = cluster.connect(CASSANDRA_KEYSPACE)
+
+# Verify connection
+print(f"Connected to Cassandra at {CASSANDRA_HOST}:{CASSANDRA_PORT} using keyspace {CASSANDRA_KEYSPACE}")
+model = SentenceTransformer(EMBED_MODEL)
 
 
 def iter_repo_files(repo_url: str) -> Iterable[pathlib.Path]:
@@ -45,14 +87,17 @@ def ingest_repo(repo_url: str):
         for cid, chunk in chunk_text(text, path.as_posix()):
             vec = model.encode(chunk, normalize_embeddings=True)
             session.execute(
-                """INSERT INTO rag.chunks (repo, file_path, chunk_id, content, embedding)
-                    VALUES (%s, %s, %s, %s, %s)""",
+                """INSERT INTO embeddings (id, content, embedding, metadata)
+                    VALUES (%s, %s, %s, %s)""",
                 (
-                    repo_name,
-                    path.as_posix(),
-                    cid,
+                    f"{repo_name}:{path.as_posix()}:{cid}",  # Create a unique ID
                     chunk,
-                    list(vec)  # Cassandra driver converts list<float> to VECTOR
+                    b64encode(bytes(vec)).decode('utf-8'),  # Store as base64-encoded blob
+                    {
+                        "repo": repo_name,
+                        "path": path.as_posix(),
+                        "chunk_id": str(cid)
+                    }  # Store metadata as a map
                 ),
             )
 
