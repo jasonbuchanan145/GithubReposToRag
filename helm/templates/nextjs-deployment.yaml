@@ -12,7 +12,8 @@ spec:
     spec:
       containers:
         - name: nextjs
-          image: ghcr.io/yourname/rag-frontend:latest
+          image: rag-frontend:latest
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3000
           env:

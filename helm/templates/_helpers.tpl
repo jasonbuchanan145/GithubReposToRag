@@ -4,6 +4,9 @@ Expand the name of the chart.
 {{- define "helm.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
+{{- define "rag-demo.labels" -}}
+{{- include "helm.labels" . }}
+{{- end }}
 
 {{/*
 Create a default fully qualified app name.
@@ -50,7 +53,7 @@ app.kubernetes.io/name: {{ include "helm.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
-{{/*
+{{/*ak
 Create the name of the services account to use
 */}}
 {{- define "helm.serviceAccountName" -}}

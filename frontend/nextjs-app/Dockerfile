@@ -1,7 +1,7 @@
 # --- build stage ---
-FROM node:20-bookworm as builder
+FROM node:20.15.1-alpine3.19 AS builder
 WORKDIR /app
-COPY package.json package-lock.json ./
+COPY frontend/nextjs-app/package.json package-lock.json ./
 RUN npm ci --prefer-offline
 COPY . .
 RUN npm run build

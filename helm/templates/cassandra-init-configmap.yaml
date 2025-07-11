@@ -1,9 +1,21 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: cassandra-init-scripts
+  name: rag-demo-cassandra-init-scripts
+  namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "rag-demo.labels" . | nindent 4 }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
 data:
-  schema.cql: |
-{{ (.Files.Get "cassandra/schema.cql") | indent 4 }}
+  01-init.cql: |
+    CREATE KEYSPACE IF NOT EXISTS vector_store WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};
+
+    USE vector_store;
+
+    CREATE TABLE IF NOT EXISTS embeddings (
+      id TEXT PRIMARY KEY,
+      content TEXT,
+      embedding BLOB,
+      metadata MAP<TEXT, TEXT>
+    );

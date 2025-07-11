@@ -1,4 +1,4 @@
-name: rag-demo-services
+name: rag-demo
 channels: [conda-forge, defaults, pytorch]
 dependencies:
   - python=3.11
@@ -10,6 +10,7 @@ dependencies:
   - libgcc-ng
   - pip:
       - vllm==0.4.3
-      - fastapi==0.111.0
+      - transformers>=4.41
       - uvicorn[standard]==0.29.0
       - pydantic==2.7.1
+      - sentence-transformers >=5.0.0
