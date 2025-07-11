@@ -10,22 +10,62 @@ cassandra:
     password: "testyMcTesterson"
     forcePassword: true
   image:
-    repository: cassandra
-    tag: 5.0-jammy
-    pullPolicy: IfNotPresent         # ← pick a real tag Bitnami publishes
+    registry: docker.io
+    repository: bitnami/cassandra
+    tag: 5.0.3-debian-12-r6
+    pullPolicy: IfNotPresent
   auth:
-    enabled: false         # disable until you wire up credentials
+    enabled: true
+    username: cassandra
+    password: "testyMcTesterson"
   resources:
     limits:
-      cpu: 1
+      cpu: 2
       memory: 4Gi
     requests:
-      cpu: 1
-      memory: 4Gi
+      cpu: 0.5
+      memory: 2Gi
+  persistence:
+    enabled: true
+    size: 8Gi
+    storageClass: "standard"
+  extraEnvVars:
+    - name: CASSANDRA_HEAP_NEWSIZE
+      value: "128M"
+    - name: CASSANDRA_MAX_HEAP_SIZE
+      value: "1024M"
+  startupProbe:
+    # Use TCP socket check instead of exec for faster, more reliable startup detection
+    enabled: true
+    # Check actual CQL port which becomes available earlier than JMX
+    tcpSocket:
+      port: 9042
+    # Don't check for exec command - let's use the TCP socket check
+    exec: null
+    initialDelaySeconds: 60
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 15  # 150 seconds (2.5 minutes) total time after initialDelay
+    successThreshold: 1
+  readinessProbe:
+    enabled: true
+    initialDelaySeconds: 60
+    periodSeconds: 10
+    timeoutSeconds: 10
+    failureThreshold: 6
+    successThreshold: 1
+  livenessProbe:
+    enabled: true
+    initialDelaySeconds: 180
+    periodSeconds: 30
+    timeoutSeconds: 30
+    failureThreshold: 5
+    successThreshold: 1
   service:
     ports:
       cql: 9042
-  initDBConfigMap: cassandra-init-scripts
+  # Disabled completely - we'll create this separately
+  initDBConfigMap: null
   # storageClass, persistence size, etc. go here
 
 qwen:

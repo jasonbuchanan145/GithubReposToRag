@@ -15,10 +15,23 @@ spec:
             - -c
             - |
               echo "⏳ waiting for Cassandra ..."
-              until nc -z {{ printf "%s-cassandra" .Release.Name }} 9042; do
-                sleep 5
+              max_attempts=30
+              attempt=0
+              # Create a simple netcat check for basic connectivity
+              while [ $attempt -lt $max_attempts ]; do
+                if nc -z -w 5 {{ printf "%s-cassandra" .Release.Name }} 9042; then
+                  echo "✅ Cassandra port is reachable. Checking service readiness..."
+                  # Additional 10 seconds wait for Cassandra to fully initialize after port is available
+                  sleep 10
+                  echo "✅ Cassandra should be ready now"
+                  exit 0
+                fi
+                attempt=$((attempt+1))
+                echo "Attempt $attempt of $max_attempts. Waiting for Cassandra to be ready..."
+                sleep 10
               done
-              echo "✅ Cassandra is ready"
+              echo "❌ Cassandra failed to become ready within the timeout period"
+              exit 1
       ## -------------------------------------------------------------------
 
       containers:
