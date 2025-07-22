@@ -82,6 +82,19 @@ ragapi:
   image: jasonbuchanan/rag-api
   imagePullPolicy: IfNotPresent
 
+# Shared data volume for repository data and summaries
+sharedData:
+  # Enable persistent volume for repo data
+  enabled: true
+  # Path on host machine to mount the volume
+  hostPath: "/tmp/rag-demo-data"
+  # Size of the persistent volume
+  size: 10Gi
+  # Path inside containers where volume is mounted
+  mountPath: "/data"
+  # Storage class for the persistent volume
+  storageClass: "standard"
+
 # This is for the secretes for pulling an image from a private repository more information can be found here: https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/
 imagePullSecrets: []
 # This is to override the chart name.

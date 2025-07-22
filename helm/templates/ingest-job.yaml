@@ -32,6 +32,25 @@ spec:
               done
               echo "❌ Cassandra failed to become ready within the timeout period"
               exit 1
+        {{- if .Values.sharedData.enabled }}
+        - name: check-data-exists
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              echo "Checking if previous data exists..."
+              if [ -f "/data/.ingest_complete" ]; then
+                echo "✅ Previous ingestion data found. Skipping ingestion."
+                # Create a flag file to signal the main container to skip ingestion
+                touch /data/.skip_ingest
+              else
+                echo "🔄 No previous ingestion data found. Will proceed with ingestion."
+              fi
+          volumeMounts:
+            - name: shared-data
+              mountPath: "/data"
+        {{- end }}
       ## -------------------------------------------------------------------
 
       containers:
@@ -54,6 +73,10 @@ spec:
                 secretKeyRef:
                   name: github-token
                   key: token
+            {{- if .Values.sharedData.enabled }}
+            - name: DATA_DIR
+              value: "{{ .Values.sharedData.mountPath }}"
+            {{- end }}
           command:
             - "conda"
             - "run"
@@ -63,3 +86,14 @@ spec:
             - "python"
             - "-m"
             - "scripts.ingest_repos"
+          {{- if .Values.sharedData.enabled }}
+          volumeMounts:
+            - name: shared-data
+              mountPath: "{{ .Values.sharedData.mountPath }}"
+          {{- end }}
+      {{- if .Values.sharedData.enabled }}
+      volumes:
+        - name: shared-data
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-shared-data-pvc
+      {{- end }}

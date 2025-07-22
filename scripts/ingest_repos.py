@@ -3,6 +3,9 @@
 import os, pathlib, itertools, textwrap, subprocess, tempfile, requests
 from base64 import b64encode
 from typing import Iterable
+import shutil
+import json
+import logging
 
 from cassandra.cluster import Cluster
 from cassandra.auth import PlainTextAuthProvider
@@ -84,45 +87,89 @@ def chunk_text(text: str, source: str) -> Iterable[tuple[int, str]]:
 
 def ingest_repo(repo_url: str):
     repo_name = repo_url.rstrip("/").split("/")[-1]
+    logging.info(f"🔄 Processing repository: {repo_name}")
+
+    # Check if we should use persistent storage
+    data_dir = os.environ.get("DATA_DIR", None)
+    repo_data_dir = None
+    if data_dir:
+        # Create a directory for this repository's data
+        repo_data_dir = os.path.join(data_dir, "repos", repo_name)
+        os.makedirs(repo_data_dir, exist_ok=True)
+        logging.info(f"📂 Using persistent storage at: {repo_data_dir}")
 
     # Temporary directory path from the cloning operation
     temp_dir = None
+    cloned_repos_count = 0
+    processed_files_count = 0
 
     # Clone the repository and get the temp directory path
+    logging.info(f"📥 Cloning repository files...")
     for path in iter_repo_files(repo_url):
         if temp_dir is None:
             # Extract the temp directory path from the first file
             temp_dir = str(path.parent.parent)
+            cloned_repos_count += 1
+            logging.info(f"📦 Repository cloned to: {temp_dir}")
 
-        with open(path, "r", errors="ignore") as fh:
-            text = fh.read()
-        for cid, chunk in chunk_text(text, path.as_posix()):
-            vec = model.encode(chunk, normalize_embeddings=True)
-            session.execute(
-                """INSERT INTO embeddings (id, content, embedding, metadata)
-                    VALUES (%s, %s, %s, %s)""",
-                (
-                    f"{repo_name}:{path.as_posix()}:{cid}",  # Create a unique ID
-                    chunk,
-                    b64encode(bytes(vec)).decode('utf-8'),  # Store as base64-encoded blob
-                    {
-                        "repo": repo_name,
-                        "path": path.as_posix(),
-                        "chunk_id": str(cid),
-                        "content_type": "code_chunk"
-                    }  # Store metadata as a map
-                ),
-            )
+            # If using persistent storage, copy the repo
+            if repo_data_dir:
+                logging.info(f"📋 Copying repository to persistent storage")
+                # First, clean any existing content
+                if os.path.exists(repo_data_dir):
+                    shutil.rmtree(repo_data_dir)
+                # Then copy the new content
+                shutil.copytree(temp_dir, repo_data_dir, symlinks=True)
+
+        processed_files_count += 1
+        if processed_files_count % 50 == 0:
+            logging.info(f"📄 Processed {processed_files_count} files...")
+
+        try:
+            with open(path, "r", errors="ignore") as fh:
+                text = fh.read()
+
+            for cid, chunk in chunk_text(text, path.as_posix()):
+                vec = model.encode(chunk, normalize_embeddings=True)
+                session.execute(
+                    """INSERT INTO embeddings (id, content, embedding, metadata)
+                        VALUES (%s, %s, %s, %s)""",
+                    (
+                        f"{repo_name}:{path.as_posix()}:{cid}",  # Create a unique ID
+                        chunk,
+                        b64encode(bytes(vec)).decode('utf-8'),  # Store as base64-encoded blob
+                        {
+                            "repo": repo_name,
+                            "path": path.as_posix(),
+                            "chunk_id": str(cid),
+                            "content_type": "code_chunk"
+                        }  # Store metadata as a map
+                    ),
+                )
+        except Exception as e:
+            logging.warning(f"⚠️ Error processing file {path}: {e}")
 
     # If we found a temporary directory, generate hierarchical summaries
     if temp_dir:
+        logging.info(f"🧠 Generating hierarchical summaries for {repo_name}...")
         try:
             from repo_summarizer import RepoSummarizer
-            summarizer = RepoSummarizer(temp_dir, repo_name)
+
+            # Use persistent storage directory if available
+            source_dir = repo_data_dir if repo_data_dir else temp_dir
+            summarizer = RepoSummarizer(source_dir, repo_name)
             summary_data = summarizer.summarize_repository()
+
+            # Save summaries to persistent storage if available
+            if repo_data_dir:
+                summary_file = os.path.join(repo_data_dir, "summaries.json")
+                with open(summary_file, "w") as f:
+                    json.dump(summary_data, f, indent=2)
+                logging.info(f"💾 Saved summaries to: {summary_file}")
 
             # Store repository-level summary
             if summary_data["summary"]:
+                logging.info(f"📝 Storing repository-level summary")
                 repo_vec = model.encode(summary_data["summary"], normalize_embeddings=True)
                 session.execute(
                     """INSERT INTO embeddings (id, content, embedding, metadata)

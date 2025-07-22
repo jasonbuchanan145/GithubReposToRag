@@ -1,0 +1,32 @@
+{{- if .Values.sharedData.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ .Release.Name }}-shared-data-pv
+  labels:
+    type: local
+    {{- include "rag-demo.labels" . | nindent 4 }}
+spec:
+  storageClassName: {{ .Values.sharedData.storageClass }}
+  capacity:
+    storage: {{ .Values.sharedData.size }}
+  accessModes:
+    - ReadWriteMany
+  hostPath:
+    path: {{ .Values.sharedData.hostPath }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-shared-data-pvc
+  labels:
+    {{- include "rag-demo.labels" . | nindent 4 }}
+spec:
+  storageClassName: {{ .Values.sharedData.storageClass }}
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: {{ .Values.sharedData.size }}
+{{- end }}

@@ -4,8 +4,17 @@ import os
 import pathlib
 import requests
 import json
+import logging
 from collections import defaultdict
 from typing import Dict, List, Any
+
+# Configure logging if not already configured
+if not logging.getLogger().handlers:
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
 
 # Get LLM API endpoint from environment variables
 LLM_ENDPOINT = os.getenv("QWEN_ENDPOINT", "http://qwen:8000")
@@ -88,11 +97,12 @@ class RepoSummarizer:
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read()
 
+            logging.debug(f"Summarizing file: {file_path.name}")
             summary = generate_summary(content, self.FILE_SUMMARY_TEMPLATE)
             self.file_summaries[str(file_path)] = summary
             return summary
         except Exception as e:
-            print(f"Error summarizing file {file_path}: {e}")
+            logging.warning(f"Error summarizing file {file_path}: {e}")
             return ""
 
     def summarize_directory(self, dir_path: pathlib.Path) -> str:
@@ -114,19 +124,32 @@ class RepoSummarizer:
 
     def summarize_repository(self) -> Dict[str, Any]:
         """Generate hierarchical summaries for the entire repository."""
+        logging.info(f"📊 Generating summaries for repository: {self.repo_name}")
+
         # First, summarize all top-level directories
         dir_summaries = []
+        dirs_to_process = []
         for item in self.repo_path.glob("*/"):
             if item.is_dir() and not item.name.startswith('.') and item.name not in ['node_modules', 'venv', '__pycache__']:
-                dir_summary = self.summarize_directory(item)
-                if dir_summary:
-                    dir_summaries.append(f"Directory: {item.name}\n{dir_summary}")
-                    self.dir_summaries[str(item)] = dir_summary
+                dirs_to_process.append(item)
+
+        logging.info(f"📂 Found {len(dirs_to_process)} top-level directories to summarize")
+
+        for i, item in enumerate(dirs_to_process):
+            logging.info(f"📂 Summarizing directory {i+1}/{len(dirs_to_process)}: {item.name}")
+            dir_summary = self.summarize_directory(item)
+            if dir_summary:
+                dir_summaries.append(f"Directory: {item.name}\n{dir_summary}")
+                self.dir_summaries[str(item)] = dir_summary
 
         # Generate repository-level summary
         if dir_summaries:
+            logging.info(f"📝 Generating repository-level summary")
             content = "\n\n".join(dir_summaries)
             self.repository_summary = generate_summary(content, self.REPO_SUMMARY_TEMPLATE)
+
+        # Count summaries generated
+        logging.info(f"✅ Summary generation complete: {len(self.dir_summaries)} directories, {len(self.file_summaries)} files")
 
         # Prepare the hierarchical summary structure
         return {
