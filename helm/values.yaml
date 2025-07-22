@@ -7,7 +7,7 @@ replicaCount: 1
 
 cassandra:
   dbUser:
-    user: "RagUser"
+    user: "cassandra"
     password: "testyMcTesterson"
     forcePassword: true
   image:
@@ -70,8 +70,8 @@ cassandra:
   # storageClass, persistence size, etc. go here
 
 qwen:
-  model: "Qwen/Qwen2.5-7B-Chat-Int8"
-  gpu: false            # set true + GPU resources if minikube supports it
+  model: "Qwen/Qwen3-4B-FP8"
+  gpu: true
 image:
   pullPolicy: IfNotPresent
 ingestjob:

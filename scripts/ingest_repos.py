@@ -18,6 +18,9 @@ CASSANDRA_USERNAME = os.getenv("CASSANDRA_USERNAME", "cassandra")
 CASSANDRA_PASSWORD = os.getenv("CASSANDRA_PASSWORD", "testyMcTesterson")
 CASSANDRA_KEYSPACE = os.getenv("CASSANDRA_KEYSPACE", "vector_store")
 
+# Debug connection details
+print(f"Connecting to Cassandra with credentials: {CASSANDRA_USERNAME}:{CASSANDRA_PASSWORD}")
+
 # Configure authentication provider
 auth_provider = PlainTextAuthProvider(username=CASSANDRA_USERNAME, password=CASSANDRA_PASSWORD)
 
@@ -81,7 +84,16 @@ def chunk_text(text: str, source: str) -> Iterable[tuple[int, str]]:
 
 def ingest_repo(repo_url: str):
     repo_name = repo_url.rstrip("/").split("/")[-1]
+
+    # Temporary directory path from the cloning operation
+    temp_dir = None
+
+    # Clone the repository and get the temp directory path
     for path in iter_repo_files(repo_url):
+        if temp_dir is None:
+            # Extract the temp directory path from the first file
+            temp_dir = str(path.parent.parent)
+
         with open(path, "r", errors="ignore") as fh:
             text = fh.read()
         for cid, chunk in chunk_text(text, path.as_posix()):
@@ -96,10 +108,81 @@ def ingest_repo(repo_url: str):
                     {
                         "repo": repo_name,
                         "path": path.as_posix(),
-                        "chunk_id": str(cid)
+                        "chunk_id": str(cid),
+                        "content_type": "code_chunk"
                     }  # Store metadata as a map
                 ),
             )
+
+    # If we found a temporary directory, generate hierarchical summaries
+    if temp_dir:
+        try:
+            from repo_summarizer import RepoSummarizer
+            summarizer = RepoSummarizer(temp_dir, repo_name)
+            summary_data = summarizer.summarize_repository()
+
+            # Store repository-level summary
+            if summary_data["summary"]:
+                repo_vec = model.encode(summary_data["summary"], normalize_embeddings=True)
+                session.execute(
+                    """INSERT INTO embeddings (id, content, embedding, metadata)
+                        VALUES (%s, %s, %s, %s)""",
+                    (
+                        f"{repo_name}:summary",  # Create a unique ID for the repo summary
+                        summary_data["summary"],
+                        b64encode(bytes(repo_vec)).decode('utf-8'),
+                        {
+                            "repo": repo_name,
+                            "content_type": "repository_summary"
+                        }
+                    ),
+                )
+
+            # Store directory-level summaries
+            for dir_info in summary_data["directories"]:
+                if dir_info["summary"]:
+                    dir_path = dir_info["path"]
+                    dir_name = os.path.basename(dir_path)
+                    dir_vec = model.encode(dir_info["summary"], normalize_embeddings=True)
+                    session.execute(
+                        """INSERT INTO embeddings (id, content, embedding, metadata)
+                            VALUES (%s, %s, %s, %s)""",
+                        (
+                            f"{repo_name}:dir:{dir_name}",
+                            dir_info["summary"],
+                            b64encode(bytes(dir_vec)).decode('utf-8'),
+                            {
+                                "repo": repo_name,
+                                "directory": dir_name,
+                                "content_type": "directory_summary"
+                            }
+                        ),
+                    )
+
+            # Store file-level summaries
+            for file_info in summary_data["files"]:
+                if file_info["summary"]:
+                    file_path = file_info["path"]
+                    file_name = os.path.basename(file_path)
+                    file_vec = model.encode(file_info["summary"], normalize_embeddings=True)
+                    session.execute(
+                        """INSERT INTO embeddings (id, content, embedding, metadata)
+                            VALUES (%s, %s, %s, %s)""",
+                        (
+                            f"{repo_name}:file:{file_path}",
+                            file_info["summary"],
+                            b64encode(bytes(file_vec)).decode('utf-8'),
+                            {
+                                "repo": repo_name,
+                                "path": file_path,
+                                "content_type": "file_summary"
+                            }
+                        ),
+                    )
+
+            print(f"✅ Generated and stored hierarchical summaries for {repo_name}")
+        except Exception as e:
+            print(f"⚠️ Error generating summaries for {repo_name}: {e}")
 
     def fetch_repos(login: str):
         after = None

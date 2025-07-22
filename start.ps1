@@ -4,8 +4,7 @@ $ErrorActionPreference = 'Stop'
 
 minikube start `
   --driver=docker `
-  --kubernetes-version=v1.30.1 `
-  --cpus=8 --memory=12g `
+  --container-runtime=docker --gpus=all --cpus=8 --memory=16g `
   --wait=all --wait-timeout=8m
 
 # 3. Enable only the addons you need, after the API-server is healthy
