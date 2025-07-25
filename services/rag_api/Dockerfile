@@ -14,4 +14,4 @@ COPY services/rag_api/ /app/
 
 # ---------- runtime ----------
 EXPOSE 8000
-ENTRYPOINT ["conda", "run", "--no-capture-output", "-n", "rag-demo", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+ENTRYPOINT ["conda", "run", "--no-capture-output", "-n", "rag-demo-service", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
