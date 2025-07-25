@@ -1,236 +1,301 @@
-import os
-import requests
-import re
-from fastapi import FastAPI
-from cassandra.cluster import Cluster
-from cassandra.auth import PlainTextAuthProvider
-from cassandra.query import SimpleStatement
-from sentence_transformers import SentenceTransformer
+"""RAG API service using LlamaIndex."""
 
-# Import system prompts
-from system_prompts import INITIAL_PROMPT, FOLLOWUP_SYSTEM_PROMPT
+import logging
+import os
+from typing import Dict, List, Any, Optional
+
+from fastapi import FastAPI, Query
+# LlamaIndex imports
+from llama_index.core import Settings, VectorStoreIndex
+from llama_index.core.query_engine import RetrieverQueryEngine
+from llama_index.core.response_synthesizers import TreeSummarize
+from llama_index.core.retrievers import VectorIndexRetriever
+from llama_index.vector_stores.cassandra import CassandraVectorStore
+from pydantic import BaseModel
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
 
 app = FastAPI()
 
-# Get Qwen API endpoint from environment variable
-QWEN_ENDPOINT = os.getenv("QWEN_ENDPOINT", "http://qwen:8000")
-
-# Use the same embedding model as ingest_repos.py
-EMBED_MODEL = os.getenv("EMBED_MODEL", "intfloat/e5-small-v2")
-embedding_model = SentenceTransformer(EMBED_MODEL)
-
-# Max iterations for follow-up RAG queries
-MAX_ITERATIONS = 3
-
-# Get Cassandra connection details from environment variables
+# Cassandra configuration
 CASSANDRA_HOST = os.getenv("CASSANDRA_HOST", "cassandra")
 CASSANDRA_PORT = int(os.getenv("CASSANDRA_PORT", "9042"))
 CASSANDRA_USERNAME = os.getenv("CASSANDRA_USERNAME", "cassandra")
 CASSANDRA_PASSWORD = os.getenv("CASSANDRA_PASSWORD", "testyMcTesterson")
 CASSANDRA_KEYSPACE = os.getenv("CASSANDRA_KEYSPACE", "vector_store")
 
-# Configure authentication provider
-auth_provider = PlainTextAuthProvider(username=CASSANDRA_USERNAME, password=CASSANDRA_PASSWORD)
+# Get Qwen endpoint from environment variable
+QWEN_ENDPOINT = os.getenv("QWEN_ENDPOINT", "http://qwen:8000")
 
-# Connect to Cassandra with auth
-cluster = Cluster(
-    [CASSANDRA_HOST], 
-    port=CASSANDRA_PORT,
-    auth_provider=auth_provider
-)
-session = cluster.connect(CASSANDRA_KEYSPACE)
+# Initialize LlamaIndex components
+def initialize_llamaindex():
+    """Initialize LlamaIndex with our custom LLM and embedding model."""
+    # Setup custom LLM for Qwen
+    from llama_index.core.llms import CustomLLM
+    from llama_index.core.response.schema import StreamingResponse
+    import requests
+    from typing import List, Any, Dict
 
+    class QwenLLM(CustomLLM):
+        """Custom LLM implementation for Qwen."""
 
-async def vector_search(query_text, top_k=5, content_type=None, repo_name=None):
-    """Perform vector search in Cassandra based on query text with optional filters"""
-    # Generate query vector
-    qvec = embedding_model.encode(query_text, normalize_embeddings=True)
-    qvec_list = qvec.tolist()
+        def __init__(self):
+            super().__init__()
+            self.endpoint = QWEN_ENDPOINT
 
-    # Base query
-    base_cql = "SELECT content, metadata FROM vector_store.embeddings"
-    where_clauses = []
-    params = [qvec_list, top_k]
+        def complete(self, prompt: str, **kwargs: Any) -> str:
+            """Complete the prompt."""
+            response = requests.post(
+                f"{self.endpoint}/v1/completions",
+                headers={"Content-Type": "application/json"},
+                json={
+                    "prompt": prompt,
+                    "max_tokens": kwargs.get("max_tokens", 1024),
+                    "temperature": kwargs.get("temperature", 0.7)
+                }
+            )
 
-    # Add content_type filter if specified
-    if content_type:
-        where_clauses.append("metadata['content_type'] = %s")
-        params.insert(1, content_type)
+            if response.status_code == 200:
+                result = response.json()
+                return result['choices'][0]['text']
+            else:
+                raise ValueError(f"Error calling Qwen API: {response.status_code}")
 
-    # Add repo_name filter if specified
-    if repo_name:
-        where_clauses.append("metadata['repo'] = %s")
-        params.insert(1, repo_name)
+        def stream_complete(self, prompt: str, **kwargs: Any) -> StreamingResponse:
+            """Stream complete the prompt."""
+            # For simplicity, we'll just return a non-streaming response
+            return StreamingResponse(self.complete(prompt, **kwargs))
 
-    # Build the complete query
-    if where_clauses:
-        cql = f"{base_cql} WHERE {' AND '.join(where_clauses)} ORDER BY embedding ANN OF %s LIMIT %s;"
-    else:
-        cql = f"{base_cql} ORDER BY embedding ANN OF %s LIMIT %s;"
+        def chat(self, messages: List[Dict], **kwargs: Any) -> str:
+            """Chat with multiple messages."""
+            # Format messages into a prompt
+            prompt = "\n".join([f"{msg['role']}: {msg['content']}" for msg in messages])
+            return self.complete(prompt, **kwargs)
 
-    # Execute the query
-    stmt = SimpleStatement(cql, fetch_size=top_k)
-    rows = session.execute(stmt, params)
+    # Configure LlamaIndex to use our embedding model
+    from sentence_transformers import SentenceTransformer
+    from llama_index.core.embeddings import HuggingFaceEmbedding
 
-    # Format results
-    results = []
-    for r in rows:
-        metadata_str = ""
-        if hasattr(r, 'metadata') and r.metadata:
-            metadata_str = "\nSource: " + ", ".join([f"{k}: {v}" for k, v in r.metadata.items()])
-        results.append({"content": r.content, "metadata": r.metadata, "text": r.content + metadata_str})
+    # Load the embedding model
+    EMBED_MODEL = os.getenv("EMBED_MODEL", "intfloat/e5-small-v2")
+    embed_model = HuggingFaceEmbedding(model_name=EMBED_MODEL)
 
-    return results
+    # Configure global settings
+    Settings.llm = QwenLLM()
+    Settings.embed_model = embed_model
 
+    logging.info(f"✅ LlamaIndex initialized with custom LLM and embedding model")
 
-async def generate_response(query, context):
-    """Generate a response using the Qwen API with the given context"""
-    prompt = INITIAL_PROMPT.format(context=context, query=query)
+# Create connection to Cassandra and set up the vector store
+def setup_vector_store() -> CassandraVectorStore:
+    """Set up the Cassandra vector store."""
+    from cassandra.cluster import Cluster
+    from cassandra.auth import PlainTextAuthProvider
 
-    # Call the Qwen API service
-    response = requests.post(
-        f"{QWEN_ENDPOINT}/v1/completions",
-        headers={"Content-Type": "application/json"},
-        json={
-            "prompt": prompt,
-            "max_tokens": 1024,  # Increased for more detailed reasoning
-            "temperature": 0.7
-        }
+    logging.info(f"🔌 Connecting to Cassandra at {CASSANDRA_HOST}:{CASSANDRA_PORT}")
+
+    auth_provider = PlainTextAuthProvider(
+        username=CASSANDRA_USERNAME, 
+        password=CASSANDRA_PASSWORD
     )
 
-    if response.status_code == 200:
-        result = response.json()
-        reply = result['choices'][0]['text'] if 'choices' in result else ""
-        return {"answer": reply.strip()}
-    else:
-        return {"error": f"Error calling Qwen API: {response.status_code}", "details": response.text}
-
-
-async def interactive_rag(query, initial_results, top_k=5):
-    """Perform interactive RAG with follow-up queries"""
-    # Format initial context
-    context = "\n\n---\n\n".join(initial_results)
-
-    # History of interactions for the conversation
-    conversation_history = [
-        {"role": "system", "content": FOLLOWUP_SYSTEM_PROMPT.format(query=query, context=context)}
-    ]
-
-    # Track search iterations
-    iteration = 0
-    max_iterations = MAX_ITERATIONS
-
-    while iteration < max_iterations:
-        # Call LLM with current conversation history
-        response = requests.post(
-            f"{QWEN_ENDPOINT}/v1/chat/completions",
-            headers={"Content-Type": "application/json"},
-            json={
-                "messages": conversation_history,
-                "max_tokens": 1024,
-                "temperature": 0.7
-            }
-        )
-
-        if response.status_code != 200:
-            return {"error": f"Error calling Qwen API: {response.status_code}", "details": response.text}
-
-        # Get response content
-        assistant_message = response.json()['choices'][0]['message']['content']
-        conversation_history.append({"role": "assistant", "content": assistant_message})
-
-        # Check for search request in the format [SEARCH: query]
-        search_match = re.search(r'\[SEARCH:\s*(.+?)\]', assistant_message)
-
-        if not search_match:
-            # No more searches requested, return final answer
-            return {"answer": assistant_message, "iterations": iteration}
-
-        # Extract search query and perform vector search
-        search_query = search_match.group(1).strip()
-        follow_up_results = await vector_search(search_query, top_k)
-        follow_up_context = "\n\n---\n\n".join(follow_up_results)
-
-        # Add search results to conversation
-        system_response = f"Search results for: {search_query}\n\n{follow_up_context}"
-        conversation_history.append({"role": "system", "content": system_response})
-
-        # Increment iteration counter
-        iteration += 1
-
-    # If we've reached max iterations, generate final response
-    conversation_history.append({
-        "role": "system", 
-        "content": "You've reached the maximum number of search iterations. Please provide your final answer based on all information gathered so far."
-    })
-
-    # Get final response
-    final_response = requests.post(
-        f"{QWEN_ENDPOINT}/v1/chat/completions",
-        headers={"Content-Type": "application/json"},
-        json={
-            "messages": conversation_history,
-            "max_tokens": 1024,
-            "temperature": 0.7
-        }
+    cluster = Cluster(
+        [CASSANDRA_HOST], 
+        port=CASSANDRA_PORT,
+        auth_provider=auth_provider
     )
 
-    if final_response.status_code == 200:
-        final_message = final_response.json()['choices'][0]['message']['content']
-        return {"answer": final_message, "iterations": iteration, "max_iterations_reached": True}
-    else:
-        return {"error": f"Error in final response: {final_response.status_code}", "details": final_response.text}
+    # Connect to the keyspace
+    session = cluster.connect(CASSANDRA_KEYSPACE)
 
+    # Create the vector store
+    vector_store = CassandraVectorStore(
+        session=session,
+        table="embeddings",
+        embedding_dimension=384,  # Dimension for e5-small-v2
+        keyspace=CASSANDRA_KEYSPACE
+    )
+
+    logging.info(f"✅ Connected to Cassandra vector store")
+    return vector_store
+
+# Create the index and query engine
+def create_query_engine(vector_store: CassandraVectorStore, top_k: int = 5):
+    """Create a query engine from the vector store."""
+    # Create the index from the vector store
+    index = VectorStoreIndex.from_vector_store(vector_store)
+
+    # Create a retriever with the specified top_k
+    retriever = VectorIndexRetriever(
+        index=index,
+        similarity_top_k=top_k
+    )
+
+    # Create a response synthesizer that uses tree summarization
+    response_synthesizer = TreeSummarize(
+        verbose=True
+    )
+
+    # Create the query engine
+    query_engine = RetrieverQueryEngine(
+        retriever=retriever,
+        response_synthesizer=response_synthesizer
+    )
+
+    return query_engine
+
+# Initialize LlamaIndex on startup
+initialize_llamaindex()
+
+# Create the vector store and query engine
+vector_store = setup_vector_store()
+default_query_engine = create_query_engine(vector_store)
+
+# Define response model
+class RAGResponse(BaseModel):
+    answer: str
+    sources: Optional[List[Dict[str, Any]]] = None
 
 @app.post("/rag")
-async def rag(query: str, top_k: int = 5, filter_tags: list = None, enable_followup: bool = True, repo_name: str = None):
-    """RAG endpoint that supports both simple and interactive approaches"""
+async def rag(
+    query: str, 
+    top_k: int = Query(5, description="Number of chunks to retrieve"),
+    repo_name: Optional[str] = Query(None, description="Filter by repository name"),
+    enable_followup: bool = Query(True, description="Enable follow-up queries")
+) -> RAGResponse:
+    """RAG endpoint for querying code repositories."""
+    logging.info(f"📝 Received query: {query}")
+
     # Check if query is about a specific repository or asking for high-level info
     repo_specific = repo_name is not None or any(keyword in query.lower() for keyword in [
         "tell me about", "describe", "what is", "overview of", "summary of", "explain"
     ])
 
-    # Initial context retrieval strategy based on query type
-    initial_results = []
-
+    # Create specialized query engines based on classification
+    # For high-level queries, create an engine that prioritizes summaries
     if repo_specific:
-        # If it's a high-level query about repos, prioritize repository summaries
-        summary_results = await vector_search(
-            query, 
-            min(3, top_k),  # Get top repository summaries
-            content_type="repository_summary",
-            repo_name=repo_name
+        logging.info("🔍 Using high-level query engine with summary prioritization")
+
+        # Create a metadata filter for content type and repo if specified
+        metadata_filters = []
+
+        # If repo name is specified, add it to the filters
+        if repo_name:
+            repo_filter = lambda meta: meta.get("repo") == repo_name
+            metadata_filters.append(repo_filter)
+
+        # Create a specialized index that prioritizes summaries first
+        from llama_index.core.retrievers import BaseRetriever
+
+        # Step 1: Create a retriever for repository summaries
+        summary_filter = lambda meta: meta.get("content_type") == "repository_summary"
+        summary_retriever = VectorIndexRetriever(
+            index=VectorStoreIndex.from_vector_store(vector_store),
+            similarity_top_k=min(3, top_k),
+            filters=summary_filter if not repo_name else lambda meta: summary_filter(meta) and repo_filter(meta)
         )
 
-        # Get directory summaries if needed
-        dir_results = await vector_search(
-            query,
-            min(3, top_k),
-            content_type="directory_summary",
-            repo_name=repo_name
+        # Step 2: Create a retriever for directory summaries
+        dir_filter = lambda meta: meta.get("content_type") == "directory_summary"
+        dir_retriever = VectorIndexRetriever(
+            index=VectorStoreIndex.from_vector_store(vector_store),
+            similarity_top_k=min(3, top_k),
+            filters=dir_filter if not repo_name else lambda meta: dir_filter(meta) and repo_filter(meta)
         )
 
-        # Add code chunks for more specific details
-        code_results = await vector_search(
-            query,
-            top_k - len(summary_results) - len(dir_results),
-            content_type="code_chunk",
-            repo_name=repo_name
+        # Step 3: Create a retriever for file summaries and code chunks
+        code_filter = lambda meta: meta.get("content_type") in ["file_summary", "code_chunk"]
+        code_retriever = VectorIndexRetriever(
+            index=VectorStoreIndex.from_vector_store(vector_store),
+            similarity_top_k=top_k - 6,  # Adjust based on other retrievers
+            filters=code_filter if not repo_name else lambda meta: code_filter(meta) and repo_filter(meta)
         )
 
-        # Combine results with summaries first
-        initial_results = summary_results + dir_results + code_results
+        # Create a custom retriever that combines results from all three
+        class HierarchicalRetriever(BaseRetriever):
+            def __init__(self, summary_retriever, dir_retriever, code_retriever):
+                self.summary_retriever = summary_retriever
+                self.dir_retriever = dir_retriever
+                self.code_retriever = code_retriever
+                super().__init__()
+
+            def _retrieve(self, query_str):
+                # Get results from each retriever
+                summary_nodes = self.summary_retriever.retrieve(query_str)
+                dir_nodes = self.dir_retriever.retrieve(query_str)
+                code_nodes = self.code_retriever.retrieve(query_str)
+
+                # Combine all nodes, putting summaries first
+                return summary_nodes + dir_nodes + code_nodes
+
+        # Create the hierarchical retriever
+        hierarchical_retriever = HierarchicalRetriever(
+            summary_retriever, dir_retriever, code_retriever
+        )
+
+        # Create the query engine with the hierarchical retriever
+        query_engine = RetrieverQueryEngine(
+            retriever=hierarchical_retriever,
+            response_synthesizer=TreeSummarize(verbose=True)
+        )
     else:
-        # For specific technical questions, focus on code chunks
-        initial_results = await vector_search(query, top_k)
+        logging.info("🔍 Using code-specific query engine")
+        # For technical queries, use a standard retriever focused on code chunks
+        metadata_filter = None
+        if repo_name:
+            metadata_filter = lambda meta: meta.get("repo") == repo_name
 
-    # Format results for context
-    context_parts = [result["text"] for result in initial_results]
-    context = "\n\n---\n\n".join(context_parts)
+        # Create a retriever optimized for code
+        retriever = VectorIndexRetriever(
+            index=VectorStoreIndex.from_vector_store(vector_store),
+            similarity_top_k=top_k,
+            filters=metadata_filter
+        )
 
-    if not enable_followup:
-        # Use simple non-interactive approach
-        return await generate_response(query, context)
+        # Create the query engine
+        query_engine = RetrieverQueryEngine(
+            retriever=retriever,
+            response_synthesizer=TreeSummarize(verbose=True)
+        )
 
-    # Interactive RAG with follow-up queries
-    return await interactive_rag(query, context_parts, top_k)
+    # Execute the query
+    try:
+        logging.info(f"🔍 Executing query with top_k={top_k}, repo_filter={repo_name}")
+        response = query_engine.query(query)
+
+        # Extract sources for citation
+        sources = []
+        if hasattr(response, 'source_nodes'):
+            for node in response.source_nodes:
+                source = {
+                    "text": node.node.text[:200] + "...",  # Truncate long texts
+                    "metadata": node.node.metadata
+                }
+                sources.append(source)
+
+        logging.info(f"✅ Query completed successfully with {len(sources)} sources")
+
+        return RAGResponse(
+            answer=str(response),
+            sources=sources
+        )
+    except Exception as e:
+        logging.error(f"❌ Error executing query: {e}")
+        return RAGResponse(
+            answer=f"Error processing your query: {str(e)}",
+            sources=[]
+        )
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint."""
+    return {"status": "healthy"}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

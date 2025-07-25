@@ -10,6 +10,19 @@ cassandra:
     user: "cassandra"
     password: "testyMcTesterson"
     forcePassword: true
+  # Increase initial timeout for schema creation with LlamaIndex
+  initDBConfigMap:
+    init.sh: |
+      #!/bin/bash
+      # Create keyspace for vector store
+      echo "Creating keyspace..."
+      cqlsh -u $CASSANDRA_USER -p $CASSANDRA_PASSWORD -e "CREATE KEYSPACE IF NOT EXISTS vector_store WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};"
+
+      # Create table for vector store
+      echo "Creating table..."
+      cqlsh -u $CASSANDRA_USER -p $CASSANDRA_PASSWORD -e "CREATE TABLE IF NOT EXISTS vector_store.embeddings (id text PRIMARY KEY, vector_id text, content text, metadata map<text, text>, embedding blob);"
+
+      echo "Database initialization complete."
   image:
     registry: docker.io
     repository: bitnami/cassandra
