@@ -156,7 +156,7 @@ docker build -t rag-frontend:latest .
 
 ## 🤝 Contributing
 
-Contributions are welcome, although this project is still in the non-functional MVP build out stage scheduled to be completed by the of August 2025.
+Contributions are welcome, although this project is still in the non-functional MVP build out stage scheduled to be completed by August 15 2025.
 
 ## 📄 License
 
