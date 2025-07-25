@@ -63,14 +63,10 @@ graph TD
 ### Setup
 
 1. **Start the local environment:**
-
-   ```shell
-   # Windows
+Start script currently only available for windows. 
+```shell
    .\start.ps1
-
-   # Linux/Mac
-   ./start.sh
-   ```
+```
 
 2. **Create GitHub token secret:**
 
