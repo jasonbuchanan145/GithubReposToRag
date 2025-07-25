@@ -24,20 +24,31 @@ graph TD
     end
 
     subgraph "Query Pipeline"
-        Q[User Query] -->|Query Classification| QC{Query Type}
+        Q[User Query] -->|REST API| API[RAG API Service]
+        API -->|Query Classification| QC{Query Type}
         QC -->|High-Level| HL[Hierarchical Retriever]
         QC -->|Code-Specific| CS[Code Retriever]
+
+        subgraph "Vector Store Integration"
+            DB[(Cassandra)]-->|Repository Summaries| HL
+            DB-->|Directory Summaries| HL
+            DB-->|File & Code Chunks| CS
+        end
+
         HL --> R[Retrieval Results]
         CS --> R
-        R -->|RAG Context| LLM[LLM Response]
-        LLM --> User
+        R -->|Context Enhancement| API
+        API -->|Augmented Prompt| LLM[LLM Response]
+        LLM -->|Response Formatting| API
+        API --> User
     end
 
-    subgraph "Infrastructure"
-        F ---|Stored in| DB[(Cassandra)]
-        API[REST API] --- LLM
-        Web[Web UI] --- API
-    end
+    F ---|Stored in| DB
+    Web[Web UI] -->|HTTP Requests| API
+
+    %% Feedback Loop
+    API -->|Interaction History| DB
+    LLM -->|Query Refinement| QC
 ```
 
 ## 🚀 Getting Started
@@ -149,7 +160,7 @@ docker build -t rag-frontend:latest .
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome, although this project is still in the non-functional MVP build out stage scheduled to be completed by the of August 2025.
 
 ## 📄 License
 
