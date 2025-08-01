@@ -4,17 +4,15 @@ from typing import List, Dict
 
 # Jupyter notebook processing
 import nbformat
-from cassandra.auth import PlainTextAuthProvideri
+from cassandra.auth import PlainTextAuthProvider
 # Ensure Cassandra keyspace exists
 from cassandra.cluster import Cluster
 # LlamaIndex imports
 from llama_index.core import Settings
-from llama_index.core.embeddings import HuggingFaceEmbedding
-from llama_index.core.response.schema import StreamingResponse
+# Remove the problematic StreamingResponse import - we'll create our own simple implementation
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.readers.github import GithubRepositoryReader, GithubClient
-from llama_index.vector_stores.cassandra import CassandraVectorStore
-from nbconvert.filters import strip_ans
-from sentence_transformers import SentenceTransformer
+from nbconvert.filters import strip_ansi
 
 
 # Notebook processing utilities

@@ -85,7 +85,7 @@ spec:
             - "rag-demo"
             - "python"
             - "-m"
-            - "scripts.llama_ingest"
+            - "scripts.ingest_repos.py"
           {{- if .Values.sharedData.enabled }}
           volumeMounts:
             - name: shared-data

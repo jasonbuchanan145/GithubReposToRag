@@ -1,8 +1,9 @@
 import json
 import logging
 import os
+import tempfile
 import time
-from typing import Any
+from typing import Any, Generator
 from typing import List
 
 import requests
@@ -11,16 +12,16 @@ from cassandra.auth import PlainTextAuthProvider
 from cassandra.cluster import Cluster
 # LlamaIndex imports
 from llama_index.core import Settings, Document, VectorStoreIndex
-from llama_index.core.embeddings import HuggingFaceEmbedding
 from llama_index.core.extractors import SummaryExtractor, TitleExtractor, KeywordExtractor
 from llama_index.core.ingestion import IngestionPipeline
 from llama_index.core.llms import CustomLLM
 from llama_index.core.node_parser import CodeSplitter
-from llama_index.core.response.schema import StreamingResponse
+# Remove the problematic StreamingResponse import - we'll create our own simple implementation
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.readers.github import GithubRepositoryReader, GithubClient
 from llama_index.vector_stores.cassandra import CassandraVectorStore
-from nbconvert.filters import strip_ans
-from sentence_transformers import SentenceTransformer
+
+from jupyter_notebook_handling import JupyterNotebookProcessor
 
 # Configure logging
 logging.basicConfig(
@@ -98,6 +99,15 @@ def should_skip_ingestion() -> bool:
         return True
     return False
 
+# Simple streaming response class to replace the missing import
+class SimpleStreamingResponse:
+    """Simple streaming response implementation."""
+    def __init__(self, content: str):
+        self.content = content
+
+    def __iter__(self):
+        yield self.content
+
 # Setup LlamaIndex with Cassandra
 def setup_llamaindex() -> None:
     """Configure LlamaIndex settings."""
@@ -128,12 +138,11 @@ def setup_llamaindex() -> None:
             else:
                 raise ValueError(f"Error calling Qwen API: {response.status_code}")
 
-        def stream_complete(self, prompt: str, **kwargs: Any) -> StreamingResponse:
+        def stream_complete(self, prompt: str, **kwargs: Any) -> SimpleStreamingResponse:
             """Stream complete the prompt."""
             # For simplicity, we'll just return a non-streaming response
-            return StreamingResponse(self.complete(prompt, **kwargs))
-
-
+            content = self.complete(prompt, **kwargs)
+            return SimpleStreamingResponse(content)
 
     # Load the embedding model
     EMBED_MODEL = os.environ.get("EMBED_MODEL", "intfloat/e5-small-v2")
@@ -144,12 +153,12 @@ def setup_llamaindex() -> None:
     Settings.embed_model = embed_model
 
     auth_provider = PlainTextAuthProvider(
-        username=CASSANDRA_USERNAME, 
+        username=CASSANDRA_USERNAME,
         password=CASSANDRA_PASSWORD
     )
 
     cluster = Cluster(
-        [CASSANDRA_HOST], 
+        [CASSANDRA_HOST],
         port=CASSANDRA_PORT,
         auth_provider=auth_provider
     )
@@ -168,12 +177,12 @@ def setup_llamaindex() -> None:
 def setup_cassandra_vector_store() -> CassandraVectorStore:
 
     auth_provider = PlainTextAuthProvider(
-        username=CASSANDRA_USERNAME, 
+        username=CASSANDRA_USERNAME,
         password=CASSANDRA_PASSWORD
     )
 
     cluster = Cluster(
-        [CASSANDRA_HOST], 
+        [CASSANDRA_HOST],
         port=CASSANDRA_PORT,
         auth_provider=auth_provider
     )
@@ -329,9 +338,9 @@ def fetch_repositories(username: str) -> List[str]:
     while True:
         payload = {"query": query, "variables": {"login": username, "after": after}}
         response = requests.post(
-            "https://api.github.com/graphql", 
-            json=payload, 
-            headers=headers, 
+            "https://api.github.com/graphql",
+            json=payload,
+            headers=headers,
             timeout=30
         )
         response.raise_for_status()

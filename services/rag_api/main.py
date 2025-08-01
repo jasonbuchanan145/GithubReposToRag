@@ -37,7 +37,6 @@ def initialize_llamaindex():
     """Initialize LlamaIndex with our custom LLM and embedding model."""
     # Setup custom LLM for Qwen
     from llama_index.core.llms import CustomLLM
-    from llama_index.core.response.schema import StreamingResponse
     import requests
     from typing import List, Any, Dict
 
@@ -69,6 +68,7 @@ def initialize_llamaindex():
         def stream_complete(self, prompt: str, **kwargs: Any) -> StreamingResponse:
             """Stream complete the prompt."""
             # For simplicity, we'll just return a non-streaming response
+            from llama_index.core.schema import StreamingResponse
             return StreamingResponse(self.complete(prompt, **kwargs))
 
         def chat(self, messages: List[Dict], **kwargs: Any) -> str:
@@ -79,7 +79,7 @@ def initialize_llamaindex():
 
     # Configure LlamaIndex to use our embedding model
     from sentence_transformers import SentenceTransformer
-    from llama_index.core.embeddings import HuggingFaceEmbedding
+    from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 
     # Load the embedding model
     EMBED_MODEL = os.getenv("EMBED_MODEL", "intfloat/e5-small-v2")
