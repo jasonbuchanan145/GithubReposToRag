@@ -14,14 +14,17 @@ from cassandra.cluster import Cluster
 from llama_index.core import Settings, Document, VectorStoreIndex
 from llama_index.core.extractors import SummaryExtractor, TitleExtractor, KeywordExtractor
 from llama_index.core.ingestion import IngestionPipeline
-from llama_index.core.llms import CustomLLM
 from llama_index.core.node_parser import CodeSplitter
 # Remove the problematic StreamingResponse import - we'll create our own simple implementation
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.readers.github import GithubRepositoryReader, GithubClient
 from llama_index.vector_stores.cassandra import CassandraVectorStore
 
-from jupyter_notebook_handling import JupyterNotebookProcessor
+from scripts.jupyter_notebook_handling import JupyterNotebookProcessor
+from llama_index.core.llms import CustomLLM, CompletionResponse, LLMMetadata
+from llama_index.core.llms.callbacks import llm_completion_callback
+from typing import Any, Dict, Optional, Sequence
+import requests
 
 # Configure logging
 logging.basicConfig(
@@ -93,7 +96,26 @@ CASSANDRA_KEYSPACE = os.environ.get("CASSANDRA_KEYSPACE", "vector_store")
 
 # Check if we should skip ingestion
 def should_skip_ingestion() -> bool:
-    """Check if we should skip ingestion based on existing data."""
+    """Check if we should skip ingestion based on existing data.
+
+    In development mode, this always returns False to recreate the data.
+    """
+    # Always reingest data during development
+    dev_mode = os.environ.get("DEV_MODE", "true").lower() in ("true", "1", "yes")
+
+    if dev_mode:
+        logging.info("🔄 Development mode: Always recreating data")
+        # If there's an existing keyspace, drop it to start fresh
+        if DATA_DIR and os.path.exists(os.path.join(DATA_DIR, ".ingest_complete")):
+            try:
+                # Clear Cassandra table data
+                clear_cassandra_data()
+                logging.info("🧹 Cleared existing vector data")
+            except Exception as e:
+                logging.warning(f"Could not clear Cassandra data: {e}")
+        return False
+
+    # Production behavior - check for skip file
     if DATA_DIR and os.path.exists(os.path.join(DATA_DIR, ".skip_ingest")):
         logging.info("🔄 Skipping ingestion as previous data was found")
         return True
@@ -110,46 +132,77 @@ class SimpleStreamingResponse:
 
 # Setup LlamaIndex with Cassandra
 def setup_llamaindex() -> None:
-    """Configure LlamaIndex settings."""
-    # Setup Qwen endpoint for LLM access
 
     class QwenLLM(CustomLLM):
-        """Custom LLM implementation for Qwen."""
+        """Custom LLM implementation for Qwen model."""
 
-        def __init__(self):
-            super().__init__()
-            self.endpoint = os.environ.get("QWEN_ENDPOINT", "http://qwen:8000")
+        model_name: str = "Qwen/Qwen3-4B-FP8"  # Match the model in values.yaml
+        context_window: int = 4096
+        num_output: int = 1024
 
-        def complete(self, prompt: str, **kwargs: Any) -> str:
-            """Complete the prompt."""
-            response = requests.post(
-                f"{self.endpoint}/v1/completions",
-                headers={"Content-Type": "application/json"},
-                json={
-                    "prompt": prompt,
-                    "max_tokens": kwargs.get("max_tokens", 1024),
-                    "temperature": kwargs.get("temperature", 0.7)
-                }
+        @property
+        def metadata(self) -> LLMMetadata:
+            """Get LLM metadata."""
+            return LLMMetadata(
+                context_window=self.context_window,
+                num_output=self.num_output,
+                model_name=self.model_name,
+                is_chat_model=True,
+                is_function_calling_model=False,
             )
 
-            if response.status_code == 200:
-                result = response.json()
-                return result['choices'][0]['text']
-            else:
-                raise ValueError(f"Error calling Qwen API: {response.status_code}")
+        @llm_completion_callback()
+        def complete(self, prompt: str, **kwargs: Any) -> CompletionResponse:
+            """Complete the prompt with Qwen model."""
+            try:
+                # Your Qwen API call logic here
+                # This is a placeholder - replace with actual Qwen API integration
+                response_text = self._call_qwen_api(prompt, **kwargs)
 
-        def stream_complete(self, prompt: str, **kwargs: Any) -> SimpleStreamingResponse:
-            """Stream complete the prompt."""
-            # For simplicity, we'll just return a non-streaming response
-            content = self.complete(prompt, **kwargs)
-            return SimpleStreamingResponse(content)
+                return CompletionResponse(text=response_text)
+            except Exception as e:
+                return CompletionResponse(text=f"Error: {str(e)}")
+
+        @llm_completion_callback()
+        def stream_complete(self, prompt: str, **kwargs: Any):
+            """Stream completion (optional but recommended)."""
+            # Implement streaming if your Qwen API supports it
+            response = self.complete(prompt, **kwargs)
+            yield response
+
+        def _call_qwen_api(self, prompt: str, **kwargs) -> str:
+            """Make API call to Qwen service."""
+            # Replace this with your actual Qwen API integration
+            # This is just a placeholder implementation
+            try:
+                # Example API call structure
+                qwen_host = "qwen-service"  # or your Qwen service host
+                qwen_port = "8000"  # or your Qwen service port
+
+                response = requests.post(
+                    f"http://{qwen_host}:{qwen_port}/generate",
+                    json={"prompt": prompt, **kwargs},
+                    timeout=30
+                )
+
+                if response.status_code == 200:
+                    return response.json().get("text", "")
+                else:
+                    return f"API Error: {response.status_code}"
+
+            except requests.RequestException as e:
+                return f"Connection Error: {str(e)}"
+            except Exception as e:
+                return f"Unexpected Error: {str(e)}"
+    # Initialize the QwenLLM class first
+    llm = QwenLLM()
 
     # Load the embedding model
     EMBED_MODEL = os.environ.get("EMBED_MODEL", "intfloat/e5-small-v2")
     embed_model = HuggingFaceEmbedding(model_name=EMBED_MODEL)
 
     # Configure global settings
-    Settings.llm = QwenLLM()
+    Settings.llm = llm
     Settings.embed_model = embed_model
 
     auth_provider = PlainTextAuthProvider(
@@ -168,11 +221,36 @@ def setup_llamaindex() -> None:
     # Create keyspace if it doesn't exist
     session.execute(
         f"""CREATE KEYSPACE IF NOT EXISTS {CASSANDRA_KEYSPACE}
-        WITH replication = {{'class': 'SimpleStrategy', 'replication_factor': '1'}}"""
-    )
+        WITH replication = {{'class': 'SimpleStrategy', 'replication_factor': '1'}}""")
 
     # Close the connection
     cluster.shutdown()
+
+def clear_cassandra_data() -> None:
+    """Clear all data from the Cassandra vector store table."""
+    logging.info(f"🧹 Clearing Cassandra vector store data...")
+
+    auth_provider = PlainTextAuthProvider(
+        username=CASSANDRA_USERNAME,
+        password=CASSANDRA_PASSWORD
+    )
+
+    cluster = Cluster(
+        [CASSANDRA_HOST],
+        port=CASSANDRA_PORT,
+        auth_provider=auth_provider
+    )
+
+    # Connect to the keyspace
+    session = cluster.connect(CASSANDRA_KEYSPACE)
+
+    # Truncate the embeddings table to clear all data
+    session.execute(f"TRUNCATE TABLE {CASSANDRA_KEYSPACE}.embeddings")
+
+    # Close the connection
+    cluster.shutdown()
+
+    logging.info(f"✅ Successfully cleared Cassandra vector store data")
 
 def setup_cassandra_vector_store() -> CassandraVectorStore:
 
@@ -200,9 +278,9 @@ def setup_cassandra_vector_store() -> CassandraVectorStore:
 
     return vector_store
 
-def ingest_repository(repo_url: str) -> None:
+
+def ingest_repository(repo_name: str) -> bool:
     """Ingest a single repository using LlamaIndex."""
-    repo_name = repo_url.rstrip("/").split("/")[-1]
     logging.info(f"🔄 Processing repository: {repo_name}")
 
     # Define where to save repository data if using persistent storage
@@ -220,9 +298,13 @@ def ingest_repository(repo_url: str) -> None:
         github_client=github_client,
         owner=GITHUB_USER,
         repo=repo_name,
-        filter_directories=(["node_modules", ".git", "__pycache__", "venv", ".idea"]),
+        filter_directories=(
+            ["node_modules", ".git", "__pycache__", "venv", ".idea"],
+            GithubRepositoryReader.FilterType.EXCLUDE
+        ),
         verbose=False,
-        concurrent_requests=10
+        concurrent_requests=5,  # Reduced to avoid rate limiting
+        timeout=60  # Increased timeout for API requests
     )
 
     try:
@@ -247,12 +329,21 @@ def ingest_repository(repo_url: str) -> None:
             logging.info(f"💾 Saved raw documents to {raw_docs_path}")
 
         # Set up code-specific node parser for chunking
-        code_splitter = CodeSplitter(
-            language="python",  # Default, will be overridden based on file extension
-            chunk_lines=40,
-            chunk_lines_overlap=15,
-            max_chars=4000
-        )
+        try:
+            code_splitter = CodeSplitter(
+                language="python",  # Default, will be overridden based on file extension
+                chunk_lines=40,
+                chunk_lines_overlap=15,
+                max_chars=4000
+            )
+        except ImportError as e:
+            logging.warning(f"CodeSplitter unavailable due to missing dependency: {e}")
+            # Fallback to simple text splitter
+            #from llama_index.core.node_parser import SentenceSplitter
+            #code_splitter = SentenceSplitter(
+            #    chunk_size=4000,
+            #    chunk_overlap=200
+            #)
 
         # Set up extractors for hierarchical summarization
         summary_extractor = SummaryExtractor(
@@ -292,6 +383,11 @@ def ingest_repository(repo_url: str) -> None:
         # Set up Cassandra vector store
         vector_store = setup_cassandra_vector_store()
 
+        # Add metadata to each node for repository identification BEFORE creating the index
+        for node in nodes:
+            # Update metadata to include repository information
+            node.metadata["repo"] = repo_name
+
         # Create vector index and store in Cassandra
         logging.info(f"📊 Creating vector index in Cassandra...")
         index = VectorStoreIndex(
@@ -300,16 +396,13 @@ def ingest_repository(repo_url: str) -> None:
             show_progress=True
         )
 
-        # Add metadata to each node for repository identification
-        for node in nodes:
-            # Update metadata to include repository information
-            node.metadata["repo"] = repo_name
-
         logging.info(f"✅ Successfully ingested repository: {repo_name}")
         return True
 
     except Exception as e:
         logging.error(f"❌ Error ingesting repository {repo_name}: {e}")
+        import traceback
+        logging.error(f"Full traceback: {traceback.format_exc()}")
         return False
 
 def fetch_repositories(username: str) -> List[str]:
@@ -323,8 +416,9 @@ def fetch_repositories(username: str) -> List[str]:
           pageInfo { endCursor hasNextPage }
           nodes {
             name
-            cloneUrl
+            url
             isArchived
+            isPrivate
           }
         }
       }
@@ -344,11 +438,17 @@ def fetch_repositories(username: str) -> List[str]:
             timeout=30
         )
         response.raise_for_status()
-
         data = response.json()["data"]["user"]["repositories"]
+
         for node in data["nodes"]:
-            if not node["isArchived"]:
-                repositories.append(node["cloneUrl"])
+            # Skip archived and private repositories
+            if node["isArchived"]:
+                logging.info(f"⏩ Skipping archived repository: {node['name']}")
+            elif node["isPrivate"]:
+                logging.info(f"🔒 Skipping private repository: {node['name']}")
+            else:
+                # Just return the repository name since GithubRepositoryReader uses owner/repo separately
+                repositories.append(node["name"])
 
         if not data["pageInfo"]["hasNextPage"]:
             break
@@ -359,9 +459,20 @@ def fetch_repositories(username: str) -> List[str]:
     return repositories
 
 def main():
-    """Main function to run the repository ingestion process."""
+    # Remove any previous ingestion completion markers in dev mode
+    dev_mode = os.environ.get("DEV_MODE", "true").lower() in ("true", "1", "yes")
+    if dev_mode and DATA_DIR:
+        ingest_complete_path = os.path.join(DATA_DIR, ".ingest_complete")
+        if os.path.exists(ingest_complete_path):
+            try:
+                os.remove(ingest_complete_path)
+                logging.info("🧹 Removed previous ingestion completion marker")
+            except Exception as e:
+                logging.warning(f"Could not remove ingestion marker: {e}")
+
     # Check if we should skip ingestion
     if should_skip_ingestion():
+        logging.warning("Skipping ingestion as requested")
         return
 
     # Configure LlamaIndex
@@ -372,9 +483,9 @@ def main():
 
     # Process each repository
     successful = 0
-    for i, repo_url in enumerate(repositories):
-        logging.info(f"🔄 Processing repository {i+1}/{len(repositories)}: {repo_url}")
-        if ingest_repository(repo_url):
+    for i, repo_name in enumerate(repositories):
+        logging.info(f"🔄 Processing repository {i+1}/{len(repositories)}: {repo_name}")
+        if ingest_repository(repo_name):
             successful += 1
 
     # Mark ingestion as complete if using persistent volume
@@ -383,6 +494,7 @@ def main():
         with open(os.path.join(DATA_DIR, ".ingest_complete"), "w") as f:
             f.write(f"Ingestion completed at {time.strftime('%Y-%m-%d %H:%M:%S')}")
             f.write(f"\nProcessed {successful}/{len(repositories)} repositories successfully.")
+
 
 if __name__ == "__main__":
     main()

@@ -85,6 +85,8 @@ cassandra:
 qwen:
   model: "Qwen/Qwen3-4B-FP8"
   gpu: true
+  # Reduce GPU memory utilization to accommodate 8GB GPU
+  gpuMemoryUtilization: 0.75
 image:
   pullPolicy: IfNotPresent
 ingestjob:

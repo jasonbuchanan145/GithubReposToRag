@@ -24,13 +24,15 @@ spec:
             - "--dtype"
             - "auto"
             - "--gpu-memory-utilization"
-            - "0.95"
+            - "$(GPU_MEMORY_UTILIZATION)"
             - "--max-num-seqs"
             - "4"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
             - name: MODEL_NAME
               value: {{ .Values.qwen.model | quote }}
+            - name: GPU_MEMORY_UTILIZATION
+              value: {{ .Values.qwen.gpuMemoryUtilization | default 0.75 | quote }}
             - name: VLLM_LOGGING_LEVEL
               value: DEBUG
           resources:
