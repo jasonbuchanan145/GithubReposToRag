@@ -29,3 +29,4 @@ dependencies:
       - llama-index-embeddings-huggingface>=0.1.0
       # Required for CodeSplitter
       - tree_sitter>=0.20.1
+      - tree_sitter_language_pack

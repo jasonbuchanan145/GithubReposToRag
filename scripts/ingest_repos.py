@@ -48,31 +48,53 @@ class NotebookAwareDocumentTransformer:
             if file_path.endswith('.ipynb'):
                 logging.info(f"🔬 Processing Jupyter notebook: {file_path}")
 
-                # Get the notebook content
+                # Get the notebook content - for GitHub API, we always need to create a temp file
                 notebook_path = file_path
-                if not os.path.exists(notebook_path) and 'file_content' in doc.metadata:
-                    # If we have content but not the file (e.g., from GitHub API)
-                    with tempfile.NamedTemporaryFile(suffix='.ipynb', mode='w', delete=False) as temp_file:
-                        temp_file.write(doc.text)
-                        notebook_path = temp_file.name
+                temp_file_created = False
 
-                # Process the notebook to extract meaningful content
-                processed_content = JupyterNotebookProcessor.process_notebook(notebook_path)
+                if not os.path.exists(notebook_path):
+                    # Create temporary file from document content (GitHub API case)
+                    try:
+                        with tempfile.NamedTemporaryFile(suffix='.ipynb', mode='w', delete=False) as temp_file:
+                            temp_file.write(doc.text)
+                            notebook_path = temp_file.name
+                            temp_file_created = True
+                            logging.debug(f"📄 Created temporary notebook file for processing: {notebook_path}")
+                    except Exception as e:
+                        logging.warning(f"⚠️ Could not create temporary file for {file_path}: {e}")
+                        # Fall back to original document without processing
+                        transformed_docs.append(doc)
+                        continue
 
-                # Create a new document with the processed content
-                transformed_doc = Document(
-                    text=processed_content,
-                    metadata={
-                        **doc.metadata,
-                        'content_type': 'notebook',
-                        'is_processed': True
-                    }
-                )
-                transformed_docs.append(transformed_doc)
+                # Process the notebook to extract meaningful content using your custom processor
+                try:
+                    processed_content = JupyterNotebookProcessor.process_notebook(notebook_path)
 
-                # Clean up temporary file if created
-                if notebook_path != file_path and os.path.exists(notebook_path):
-                    os.unlink(notebook_path)
+                    # Create a new document with the processed content
+                    transformed_doc = Document(
+                        text=processed_content,
+                        metadata={
+                            **doc.metadata,
+                            'content_type': 'notebook',
+                            'is_processed': True
+                        }
+                    )
+                    transformed_docs.append(transformed_doc)
+                    logging.debug(f"✅ Successfully processed notebook: {file_path}")
+
+                except Exception as e:
+                    logging.warning(f"⚠️ JupyterNotebookProcessor failed for {file_path}: {e}")
+                    # Fall back to using the original document
+                    transformed_docs.append(doc)
+
+                finally:
+                    # Clean up temporary file if we created one
+                    if temp_file_created and os.path.exists(notebook_path):
+                        try:
+                            os.unlink(notebook_path)
+                            logging.debug(f"🧹 Cleaned up temporary file: {notebook_path}")
+                        except Exception as cleanup_error:
+                            logging.warning(f"Could not clean up temporary file {notebook_path}: {cleanup_error}")
             else:
                 # Keep other documents as is
                 transformed_docs.append(doc)
@@ -331,7 +353,7 @@ def ingest_repository(repo_name: str) -> bool:
         # Set up code-specific node parser for chunking
         try:
             code_splitter = CodeSplitter(
-                language="python",  # Default, will be overridden based on file extension
+                language="auto",
                 chunk_lines=40,
                 chunk_lines_overlap=15,
                 max_chars=4000
@@ -339,18 +361,15 @@ def ingest_repository(repo_name: str) -> bool:
         except ImportError as e:
             logging.warning(f"CodeSplitter unavailable due to missing dependency: {e}")
             # Fallback to simple text splitter
-            #from llama_index.core.node_parser import SentenceSplitter
-            #code_splitter = SentenceSplitter(
-            #    chunk_size=4000,
-            #    chunk_overlap=200
-            #)
+            from llama_index.core.node_parser import SentenceSplitter
+            code_splitter = SentenceSplitter(
+                chunk_size=4000,
+                chunk_overlap=200
+            )
 
         # Set up extractors for hierarchical summarization
         summary_extractor = SummaryExtractor(
-            summaries=[
-                "A brief summary of the code or text",
-                "The main purpose and functionality"
-            ],
+            summaries=["self"],
             show_progress=True
         )
 
