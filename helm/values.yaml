@@ -85,8 +85,12 @@ cassandra:
 qwen:
   model: "Qwen/Qwen3-4B-FP8"
   gpu: true
-  # Reduce GPU memory utilization to accommodate 8GB GPU
-  gpuMemoryUtilization: 0.75
+  # Increase GPU memory utilization to fit larger KV cache
+  gpuMemoryUtilization: 0.85
+  # Limit context window to fit available KV cache memory
+  # maxModelLen: 16384
+  # Limit context window to fit available KV cache memory
+  maxModelLen: 11712
 image:
   pullPolicy: IfNotPresent
 ingestjob:

@@ -6,6 +6,8 @@ metadata:
     {{- include "rag-demo.labels" . | nindent 4 }}
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: qwen
@@ -25,6 +27,8 @@ spec:
             - "auto"
             - "--gpu-memory-utilization"
             - "$(GPU_MEMORY_UTILIZATION)"
+            - "--max-model-len"
+            - "$(MAX_MODEL_LEN)"
             - "--max-num-seqs"
             - "4"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
@@ -33,6 +37,8 @@ spec:
               value: {{ .Values.qwen.model | quote }}
             - name: GPU_MEMORY_UTILIZATION
               value: {{ .Values.qwen.gpuMemoryUtilization | default 0.75 | quote }}
+            - name: MAX_MODEL_LEN
+              value: {{ .Values.qwen.maxModelLen | default 11712 | quote }}
             - name: VLLM_LOGGING_LEVEL
               value: DEBUG
           resources:

@@ -26,10 +26,12 @@ from llama_index.core.llms.callbacks import llm_completion_callback
 from typing import Any, Dict, Optional, Sequence
 import requests
 
-# Configure logging
+from scripts.langauge_detector import create_code_splitter_safely
+
+# Configure logging with DEBUG level for troubleshooting
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
+    level=logging.DEBUG,
+    format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 
@@ -176,13 +178,14 @@ def setup_llamaindex() -> None:
         @llm_completion_callback()
         def complete(self, prompt: str, **kwargs: Any) -> CompletionResponse:
             """Complete the prompt with Qwen model."""
+            logging.debug(f"🤖 QwenLLM.complete called with prompt length: {len(prompt)}")
+            logging.debug(f"🤖 Prompt preview: {prompt[:200]}...")
             try:
-                # Your Qwen API call logic here
-                # This is a placeholder - replace with actual Qwen API integration
                 response_text = self._call_qwen_api(prompt, **kwargs)
-
+                logging.debug(f"🤖 QwenLLM response length: {len(response_text)}")
                 return CompletionResponse(text=response_text)
             except Exception as e:
+                logging.error(f"🤖 QwenLLM.complete failed: {str(e)}")
                 return CompletionResponse(text=f"Error: {str(e)}")
 
         @llm_completion_callback()
@@ -193,29 +196,47 @@ def setup_llamaindex() -> None:
             yield response
 
         def _call_qwen_api(self, prompt: str, **kwargs) -> str:
-            """Make API call to Qwen service."""
-            # Replace this with your actual Qwen API integration
-            # This is just a placeholder implementation
+            """Make API call to Qwen service using vLLM OpenAI API."""
             try:
-                # Example API call structure
-                qwen_host = "qwen-service"  # or your Qwen service host
-                qwen_port = "8000"  # or your Qwen service port
+                # Use correct vLLM service name and endpoint
+                qwen_host = "qwen"  # Service name from your deployment
+                qwen_port = "8000"
+
+                # Use OpenAI-compatible completions endpoint
+                payload = {
+                    "model": self.model_name,
+                    "prompt": prompt,
+                    "max_tokens": self.num_output,
+                    "temperature": kwargs.get("temperature", 0.7),
+                    "top_p": kwargs.get("top_p", 0.9),
+                }
 
                 response = requests.post(
-                    f"http://{qwen_host}:{qwen_port}/generate",
-                    json={"prompt": prompt, **kwargs},
-                    timeout=30
+                    f"http://{qwen_host}:{qwen_port}/v1/completions",
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                    timeout=60  # Increased timeout for model processing
                 )
 
                 if response.status_code == 200:
-                    return response.json().get("text", "")
+                    result = response.json()
+                    if "choices" in result and len(result["choices"]) > 0:
+                        return result["choices"][0]["text"]
+                    else:
+                        return "No response generated"
                 else:
-                    return f"API Error: {response.status_code}"
+                    error_msg = f"API Error {response.status_code}: {response.text}"
+                    print(error_msg)  # Debug logging
+                    return error_msg
 
             except requests.RequestException as e:
-                return f"Connection Error: {str(e)}"
+                error_msg = f"Connection Error: {str(e)}"
+                print(error_msg)  # Debug logging
+                return error_msg
             except Exception as e:
-                return f"Unexpected Error: {str(e)}"
+                error_msg = f"Unexpected Error: {str(e)}"
+                print(error_msg)  # Debug logging
+                return error_msg
     # Initialize the QwenLLM class first
     llm = QwenLLM()
 
@@ -335,6 +356,64 @@ def ingest_repository(repo_name: str) -> bool:
         documents = reader.load_data(branch="main")
         logging.info(f"📄 Loaded {len(documents)} files from {repo_name}")
 
+        # Filter out unwanted file types that are not useful for code analysis
+        SKIP_EXTENSIONS = {
+            # Data files
+            '.csv', '.tsv', '.xlsx', '.xls', '.parquet', '.feather',
+            '.json', '.xml', '.jsonl', '.ndjson'
+            # Images
+            '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.svg', '.webp', '.ico',
+            '.tiff', '.tif', '.psd',
+            # Audio/Video
+            '.mp3', '.wav', '.mp4', '.avi', '.mov', '.mkv', '.flv',
+            # Archives
+            '.zip', '.tar', '.gz', '.rar', '.7z', '.bz2',
+            # Binary files
+            '.exe', '.dll', '.so', '.dylib', '.bin',
+            # Large text dumps that aren't useful
+            '.log', '.dump', '.backup',
+            # Database files
+            '.db', '.sqlite', '.sqlite3'
+        }
+
+        # Skip files by exact filename (case-insensitive)
+        SKIP_FILENAMES = {
+            'license', 'license.txt', 'license.md',
+            'changelog', 'changelog.txt', 'changelog.md',
+            'authors', 'authors.txt', 'authors.md',
+            'contributors', 'contributors.txt', 'contributors.md',
+            'copying', 'copying.txt', 'copying.md',
+            'notice', 'notice.txt', 'notice.md',
+            '.gitignore', '.gitattributes', '.gitmodules',
+            '.dockerignore', '.eslintignore', '.prettierignore'
+        }
+
+        filtered_documents = []
+        skipped_files = []
+
+        for doc in documents:
+            file_path = doc.metadata.get('file_path', '')
+            file_extension = '.' + file_path.split('.')[-1].lower() if '.' in file_path else ''
+            filename = file_path.split('/')[-1].lower()  # Get just the filename part
+
+            # Skip by extension
+            if file_extension in SKIP_EXTENSIONS:
+                skipped_files.append(file_path)
+                continue
+
+            # Skip by filename
+            if filename in SKIP_FILENAMES:
+                skipped_files.append(file_path)
+                continue
+
+            filtered_documents.append(doc)
+
+        if skipped_files:
+            logging.info(f"⏩ Skipped {len(skipped_files)} files with unwanted extensions: {', '.join(skipped_files[:5])}{'...' if len(skipped_files) > 5 else ''}")
+
+        documents = filtered_documents
+        logging.info(f"📄 Processing {len(documents)} files after filtering")
+
         # Count notebooks
         notebook_count = sum(1 for doc in documents if doc.metadata.get('file_path', '').endswith('.ipynb'))
         if notebook_count > 0:
@@ -350,13 +429,22 @@ def ingest_repository(repo_name: str) -> bool:
                 json.dump([doc.to_dict() for doc in documents], f, indent=2)
             logging.info(f"💾 Saved raw documents to {raw_docs_path}")
 
-        # Set up code-specific node parser for chunking
+        # Test Qwen connectivity before proceeding
+        logging.info("🔍 Testing Qwen service connectivity...")
         try:
-            code_splitter = CodeSplitter(
-                language="auto",
-                chunk_lines=40,
-                chunk_lines_overlap=15,
-                max_chars=4000
+            test_response = requests.get("http://qwen:8000/v1/models", timeout=10)
+            logging.info(f"✅ Qwen service accessible - Status: {test_response.status_code}")
+        except Exception as e:
+            logging.warning(f"⚠️ Cannot reach Qwen service: {e}")
+
+        # Set up code-specific node parser for chunking
+        # In your ingest_repository function, around line 355, replace:
+        try:
+            # Pass additional context for better language detection
+            code_splitter = create_code_splitter_safely(
+                file_path=None,  # Will be determined per document
+                language=None,   # Will auto-detect
+                document_content=None  # Will be determined per document
             )
         except ImportError as e:
             logging.warning(f"CodeSplitter unavailable due to missing dependency: {e}")
@@ -368,15 +456,20 @@ def ingest_repository(repo_name: str) -> bool:
             )
 
         # Set up extractors for hierarchical summarization
+        logging.info(f"📋 Setting up extractors...")
         summary_extractor = SummaryExtractor(
             summaries=["self"],
             show_progress=True
         )
+        logging.info(f"📋 SummaryExtractor created")
 
         title_extractor = TitleExtractor(nodes=5)
-        keyword_extractor = KeywordExtractor(keywords=10)
+        logging.info(f"📋 TitleExtractor created")
 
-        # Create ingestion pipeline
+        keyword_extractor = KeywordExtractor(keywords=10)
+        logging.info(f"📋 KeywordExtractor created")
+
+        # Create ingestion pipeline with LLM extractors
         logging.info(f"🔍 Creating ingestion pipeline with summarization...")
         pipeline = IngestionPipeline(
             transformations=[
@@ -386,11 +479,25 @@ def ingest_repository(repo_name: str) -> bool:
                 keyword_extractor
             ]
         )
+        logging.info(f"🔍 Pipeline created with {len(pipeline.transformations)} transformations")
 
         # Process documents
-        logging.info(f"⚙️ Processing documents through ingestion pipeline...")
-        nodes = pipeline.run(documents=documents)
-        logging.info(f"🧩 Created {len(nodes)} nodes from {len(documents)} documents")
+        logging.info(f"⚙️ Processing {len(documents)} documents through ingestion pipeline...")
+        logging.info(f"⚙️ Starting pipeline.run()...")
+
+        # Add timeout and progress tracking
+        import time
+        start_time = time.time()
+        try:
+            nodes = pipeline.run(documents=documents)
+            elapsed_time = time.time() - start_time
+            logging.info(f"🧩 Created {len(nodes)} nodes from {len(documents)} documents in {elapsed_time:.2f}s")
+        except Exception as e:
+            elapsed_time = time.time() - start_time
+            logging.error(f"❌ Pipeline failed after {elapsed_time:.2f}s: {str(e)}")
+            import traceback
+            logging.error(f"Full traceback: {traceback.format_exc()}")
+            raise
 
         # Save processed nodes if using persistent storage
         if repo_data_dir:
