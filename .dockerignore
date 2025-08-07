@@ -13,7 +13,7 @@
 minikube    # the local cluster’s data if it lives inside the repo
 
 # ───── keep the files the images need ─────
-!scripts/**
+!ingest/**
 !services/**
 !frontend/nextjs-app/**
 !cassandra/**

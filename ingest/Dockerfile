@@ -21,5 +21,5 @@ RUN touch /app/scripts/__init__.py
 ENV DEV_MODE=true
 
 # ---------- entrypoint ----------
-# Fix: Use consistent environment name and proper module path
-ENTRYPOINT ["conda", "run", "--no-capture-output", "-n", "rag-demo", "python", "-m", "scripts.ingest_repos"]
+
+ENTRYPOINT ["conda", "run", "--no-capture-output", "-n", "rag-demo", "python", "-m", "src"]

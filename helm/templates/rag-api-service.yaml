@@ -5,10 +5,10 @@ metadata:
   labels:
     {{- include "rag-demo.labels" . | nindent 4 }}
 spec:
-  type: ClusterIP
+  type: NodePort
   selector:
     app: rag-api
   ports:
     - port: 8000
       targetPort: 8000
-      name: http
+      nodePort: 30800

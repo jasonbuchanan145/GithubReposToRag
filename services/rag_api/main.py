@@ -4,14 +4,21 @@ import logging
 import os
 from typing import Dict, List, Any, Optional
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 # LlamaIndex imports
 from llama_index.core import Settings, VectorStoreIndex
 from llama_index.core.query_engine import RetrieverQueryEngine
 from llama_index.core.response_synthesizers import TreeSummarize
 from llama_index.core.retrievers import VectorIndexRetriever
 from llama_index.vector_stores.cassandra import CassandraVectorStore
+from llama_index.core.llms import CustomLLM, CompletionResponse, LLMMetadata
+from llama_index.core.llms.callbacks import llm_completion_callback
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from pydantic import BaseModel
+import requests
+from cassandra.cluster import Cluster
+from cassandra.auth import PlainTextAuthProvider
 
 # Configure logging
 logging.basicConfig(
@@ -20,10 +27,23 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 
-app = FastAPI()
+app = FastAPI(
+    title="RAG API Service",
+    description="RAG service for querying code repositories",
+    version="1.0.0"
+)
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Cassandra configuration
-CASSANDRA_HOST = os.getenv("CASSANDRA_HOST", "cassandra")
+CASSANDRA_HOST = os.getenv("CASSANDRA_HOST", "rag-demo-cassandra")
 CASSANDRA_PORT = int(os.getenv("CASSANDRA_PORT", "9042"))
 CASSANDRA_USERNAME = os.getenv("CASSANDRA_USERNAME", "cassandra")
 CASSANDRA_PASSWORD = os.getenv("CASSANDRA_PASSWORD", "testyMcTesterson")
@@ -32,55 +52,82 @@ CASSANDRA_KEYSPACE = os.getenv("CASSANDRA_KEYSPACE", "vector_store")
 # Get Qwen endpoint from environment variable
 QWEN_ENDPOINT = os.getenv("QWEN_ENDPOINT", "http://qwen:8000")
 
-# Initialize LlamaIndex components
-def initialize_llamaindex():
-    """Initialize LlamaIndex with our custom LLM and embedding model."""
-    # Setup custom LLM for Qwen
-    from llama_index.core.llms import CustomLLM
-    import requests
-    from typing import List, Any, Dict
+class QwenLLM(CustomLLM):
+    """Custom LLM implementation for Qwen model matching ingest service."""
 
-    class QwenLLM(CustomLLM):
-        """Custom LLM implementation for Qwen."""
+    model_name: str = "Qwen/Qwen3-4B-FP8"
+    context_window: int = 11712  # Match the configured max_model_len
+    num_output: int = 1024
 
-        def __init__(self):
-            super().__init__()
-            self.endpoint = QWEN_ENDPOINT
+    @property
+    def metadata(self) -> LLMMetadata:
+        """Get LLM metadata."""
+        return LLMMetadata(
+            context_window=self.context_window,
+            num_output=self.num_output,
+            model_name=self.model_name,
+            is_chat_model=True,
+            is_function_calling_model=False,
+        )
 
-        def complete(self, prompt: str, **kwargs: Any) -> str:
-            """Complete the prompt."""
+    @llm_completion_callback()
+    def complete(self, prompt: str, **kwargs: Any) -> CompletionResponse:
+        """Complete the prompt with Qwen model."""
+        logging.debug(f"🤖 QwenLLM.complete called with prompt length: {len(prompt)}")
+        try:
+            response_text = self._call_qwen_api(prompt, **kwargs)
+            return CompletionResponse(text=response_text)
+        except Exception as e:
+            logging.error(f"🤖 QwenLLM.complete failed: {str(e)}")
+            return CompletionResponse(text=f"Error: {str(e)}")
+
+    @llm_completion_callback()
+    def stream_complete(self, prompt: str, **kwargs: Any):
+        """Stream completion (optional but recommended)."""
+        response = self.complete(prompt, **kwargs)
+        yield response
+
+    def _call_qwen_api(self, prompt: str, **kwargs) -> str:
+        """Make API call to Qwen service using vLLM OpenAI API."""
+        logging.debug(f"🔗 Making API call to Qwen with prompt length: {len(prompt)}")
+        try:
+            payload = {
+                "model": self.model_name,
+                "prompt": prompt,
+                "max_tokens": kwargs.get("max_tokens", self.num_output),
+                "temperature": kwargs.get("temperature", 0.7),
+                "top_p": kwargs.get("top_p", 0.9),
+            }
+
             response = requests.post(
-                f"{self.endpoint}/v1/completions",
+                f"{QWEN_ENDPOINT}/v1/completions",
+                json=payload,
                 headers={"Content-Type": "application/json"},
-                json={
-                    "prompt": prompt,
-                    "max_tokens": kwargs.get("max_tokens", 1024),
-                    "temperature": kwargs.get("temperature", 0.7)
-                }
+                timeout=60
             )
 
             if response.status_code == 200:
                 result = response.json()
-                return result['choices'][0]['text']
+                if "choices" in result and len(result["choices"]) > 0:
+                    return result["choices"][0]["text"]
+                else:
+                    return "No response generated"
             else:
-                raise ValueError(f"Error calling Qwen API: {response.status_code}")
+                error_msg = f"API Error {response.status_code}: {response.text}"
+                logging.warning(error_msg)
+                return error_msg
 
-        def stream_complete(self, prompt: str, **kwargs: Any) -> StreamingResponse:
-            """Stream complete the prompt."""
-            # For simplicity, we'll just return a non-streaming response
-            from llama_index.core.schema import StreamingResponse
-            return StreamingResponse(self.complete(prompt, **kwargs))
+        except requests.RequestException as e:
+            error_msg = f"Connection Error: {str(e)}"
+            logging.error(error_msg)
+            return error_msg
+        except Exception as e:
+            error_msg = f"Unexpected Error: {str(e)}"
+            logging.error(error_msg)
+            return error_msg
 
-        def chat(self, messages: List[Dict], **kwargs: Any) -> str:
-            """Chat with multiple messages."""
-            # Format messages into a prompt
-            prompt = "\n".join([f"{msg['role']}: {msg['content']}" for msg in messages])
-            return self.complete(prompt, **kwargs)
-
-    # Configure LlamaIndex to use our embedding model
-    from sentence_transformers import SentenceTransformer
-    from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-
+def initialize_llamaindex():
+    """Initialize LlamaIndex with our custom LLM and embedding model."""
     # Load the embedding model
     EMBED_MODEL = os.getenv("EMBED_MODEL", "intfloat/e5-small-v2")
     embed_model = HuggingFaceEmbedding(model_name=EMBED_MODEL)
@@ -89,7 +136,7 @@ def initialize_llamaindex():
     Settings.llm = QwenLLM()
     Settings.embed_model = embed_model
 
-    logging.info(f"✅ LlamaIndex initialized with custom LLM and embedding model")
+    logging.info(f"✅ LlamaIndex initialized with QwenLLM and embedding model")
 
 # Create connection to Cassandra and set up the vector store
 def setup_vector_store() -> CassandraVectorStore:
@@ -149,132 +196,85 @@ def create_query_engine(vector_store: CassandraVectorStore, top_k: int = 5):
 
     return query_engine
 
-# Initialize LlamaIndex on startup
-initialize_llamaindex()
+# Global variables for reuse
+global_vector_store = None
+global_index = None
 
-# Create the vector store and query engine
-vector_store = setup_vector_store()
-default_query_engine = create_query_engine(vector_store)
+@app.on_event("startup")
+async def startup_event():
+    """Initialize services on startup."""
+    global global_vector_store, global_index
+
+    logging.info("🚀 Starting RAG API service...")
+
+    # Initialize LlamaIndex
+    initialize_llamaindex()
+
+    # Create the vector store
+    global_vector_store = setup_vector_store()
+
+    # Create the index from vector store
+    global_index = VectorStoreIndex.from_vector_store(global_vector_store)
+
+    logging.info("✅ RAG API service initialized successfully")
+
+@app.get("/status")
+async def status():
+    """Service status endpoint."""
+    return {
+        "status": "healthy",
+        "qwen_endpoint": QWEN_ENDPOINT,
+        "cassandra_host": CASSANDRA_HOST,
+        "index_ready": global_index is not None
+    }
 
 # Define response model
 class RAGResponse(BaseModel):
     answer: str
     sources: Optional[List[Dict[str, Any]]] = None
 
+# Request/Response models
+class QueryRequest(BaseModel):
+    query: str
+    top_k: Optional[int] = 5
+    repo_name: Optional[str] = None
+
 @app.post("/rag")
-async def rag(
-    query: str, 
-    top_k: int = Query(5, description="Number of chunks to retrieve"),
-    repo_name: Optional[str] = Query(None, description="Filter by repository name"),
-    enable_followup: bool = Query(True, description="Enable follow-up queries")
-) -> RAGResponse:
+async def rag(request: QueryRequest) -> RAGResponse:
     """RAG endpoint for querying code repositories."""
-    logging.info(f"📝 Received query: {query}")
+    logging.info(f"📝 Received query: {request.query}")
 
-    # Check if query is about a specific repository or asking for high-level info
-    repo_specific = repo_name is not None or any(keyword in query.lower() for keyword in [
-        "tell me about", "describe", "what is", "overview of", "summary of", "explain"
-    ])
-
-    # Create specialized query engines based on classification
-    # For high-level queries, create an engine that prioritizes summaries
-    if repo_specific:
-        logging.info("🔍 Using high-level query engine with summary prioritization")
-
-        # Create a metadata filter for content type and repo if specified
-        metadata_filters = []
-
-        # If repo name is specified, add it to the filters
-        if repo_name:
-            repo_filter = lambda meta: meta.get("repo") == repo_name
-            metadata_filters.append(repo_filter)
-
-        # Create a specialized index that prioritizes summaries first
-        from llama_index.core.retrievers import BaseRetriever
-
-        # Step 1: Create a retriever for repository summaries
-        summary_filter = lambda meta: meta.get("content_type") == "repository_summary"
-        summary_retriever = VectorIndexRetriever(
-            index=VectorStoreIndex.from_vector_store(vector_store),
-            similarity_top_k=min(3, top_k),
-            filters=summary_filter if not repo_name else lambda meta: summary_filter(meta) and repo_filter(meta)
-        )
-
-        # Step 2: Create a retriever for directory summaries
-        dir_filter = lambda meta: meta.get("content_type") == "directory_summary"
-        dir_retriever = VectorIndexRetriever(
-            index=VectorStoreIndex.from_vector_store(vector_store),
-            similarity_top_k=min(3, top_k),
-            filters=dir_filter if not repo_name else lambda meta: dir_filter(meta) and repo_filter(meta)
-        )
-
-        # Step 3: Create a retriever for file summaries and code chunks
-        code_filter = lambda meta: meta.get("content_type") in ["file_summary", "code_chunk"]
-        code_retriever = VectorIndexRetriever(
-            index=VectorStoreIndex.from_vector_store(vector_store),
-            similarity_top_k=top_k - 6,  # Adjust based on other retrievers
-            filters=code_filter if not repo_name else lambda meta: code_filter(meta) and repo_filter(meta)
-        )
-
-        # Create a custom retriever that combines results from all three
-        class HierarchicalRetriever(BaseRetriever):
-            def __init__(self, summary_retriever, dir_retriever, code_retriever):
-                self.summary_retriever = summary_retriever
-                self.dir_retriever = dir_retriever
-                self.code_retriever = code_retriever
-                super().__init__()
-
-            def _retrieve(self, query_str):
-                # Get results from each retriever
-                summary_nodes = self.summary_retriever.retrieve(query_str)
-                dir_nodes = self.dir_retriever.retrieve(query_str)
-                code_nodes = self.code_retriever.retrieve(query_str)
-
-                # Combine all nodes, putting summaries first
-                return summary_nodes + dir_nodes + code_nodes
-
-        # Create the hierarchical retriever
-        hierarchical_retriever = HierarchicalRetriever(
-            summary_retriever, dir_retriever, code_retriever
-        )
-
-        # Create the query engine with the hierarchical retriever
-        query_engine = RetrieverQueryEngine(
-            retriever=hierarchical_retriever,
-            response_synthesizer=TreeSummarize(verbose=True)
-        )
-    else:
-        logging.info("🔍 Using code-specific query engine")
-        # For technical queries, use a standard retriever focused on code chunks
+    try:
+        # Create metadata filter if repo is specified
         metadata_filter = None
-        if repo_name:
-            metadata_filter = lambda meta: meta.get("repo") == repo_name
+        if request.repo_name:
+            metadata_filter = {"repo": request.repo_name}
 
-        # Create a retriever optimized for code
+        # Create retriever with optimized settings
         retriever = VectorIndexRetriever(
-            index=VectorStoreIndex.from_vector_store(vector_store),
-            similarity_top_k=top_k,
+            index=global_index,
+            similarity_top_k=request.top_k,
             filters=metadata_filter
         )
 
-        # Create the query engine
+        # Create query engine with faster response synthesizer
         query_engine = RetrieverQueryEngine(
             retriever=retriever,
-            response_synthesizer=TreeSummarize(verbose=True)
+            response_synthesizer=TreeSummarize(verbose=False)  # Disable verbose for performance
         )
 
-    # Execute the query
-    try:
-        logging.info(f"🔍 Executing query with top_k={top_k}, repo_filter={repo_name}")
-        response = query_engine.query(query)
+        # Execute the query
+        logging.info(f"🔍 Executing query with top_k={request.top_k}, repo_filter={request.repo_name}")
+        response = query_engine.query(request.query)
 
         # Extract sources for citation
         sources = []
         if hasattr(response, 'source_nodes'):
             for node in response.source_nodes:
                 source = {
-                    "text": node.node.text[:200] + "...",  # Truncate long texts
-                    "metadata": node.node.metadata
+                    "text": node.node.text[:300] + "..." if len(node.node.text) > 300 else node.node.text,
+                    "metadata": node.node.metadata,
+                    "score": getattr(node, 'score', None)
                 }
                 sources.append(source)
 
@@ -286,10 +286,7 @@ async def rag(
         )
     except Exception as e:
         logging.error(f"❌ Error executing query: {e}")
-        return RAGResponse(
-            answer=f"Error processing your query: {str(e)}",
-            sources=[]
-        )
+        raise HTTPException(status_code=500, detail=f"Error processing query: {str(e)}")
 
 @app.get("/health")
 async def health_check():
