@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import json
 import logging
 import uuid
@@ -7,19 +8,17 @@ from typing import Dict, List, Optional, Tuple, Union
 
 from llama_index.core import Document, VectorStoreIndex
 
+from app.catalog.catalog_builder import make_catalog_document
 from app.config import SETTINGS
-from app.services.github_service import GithubService, fetch_repositories
+from app.pipelines.catalog_pipeline import build_catalog_pipeline
 from app.services.cassandra_service import CassandraService
+from app.services.github_service import GithubService, fetch_repositories
 from app.services.transform_service import (
     filter_documents,
     transform_special_files,
     infer_component_kind,
 )
-from app.pipelines.code_pipeline import build_code_pipeline
-from app.pipelines.catalog_pipeline import build_catalog_pipeline
-from app.catalog.catalog_builder import make_catalog_document
 from app.streaming import stream_event, stream_step
-from app.llm_init import initialize_llm_settings
 
 
 def _ensure_dump_raw_docs(repo: str, branch: str, docs: List[Document]) -> None:
@@ -47,9 +46,7 @@ def _attach_common_metadata(nodes, *, namespace: str, repo: str, branch: str, co
         md["ingest_run_id"] = str(run_id)
         md.setdefault("doc_type", doc_type)
         md.setdefault("path", md.get("file_path"))
-        if "language" not in md and md.get("file_path"):
-            ext = ("." + md["file_path"].split(".")[-1].lower()) if "." in md.get("file_path", "") else ""
-            md["language"] = ext.lstrip(".")
+        # Language should already be set during document preprocessing
 
 
 def ingest_component(
@@ -93,11 +90,61 @@ def ingest_component(
     logging.info(f"🔄 After transformation: {len(transformed)} documents remain")
 
     # Add language detection to document metadata before processing
+    # Map extensions to tree-sitter language names based on tree-sitter-language-pack
+    EXTENSION_TO_LANGUAGE = {
+        '.js': 'javascript',
+        '.jsx': 'javascript', 
+        '.ts': 'typescript',
+        '.tsx': 'typescript',
+        '.py': 'python',
+        '.java': 'java',
+        '.cpp': 'cpp',
+        '.cc': 'cpp',
+        '.cxx': 'cpp',
+        '.c': 'c',
+        '.h': 'c',
+        '.cs': 'c_sharp',
+        '.php': 'php',
+        '.rb': 'ruby',
+        '.go': 'go',
+        '.rs': 'rust',
+        '.swift': 'swift',
+        '.kt': 'kotlin',
+        '.scala': 'scala',
+        '.sh': 'bash',
+        '.bash': 'bash',
+        '.sql': 'sql',
+        '.html': 'html',
+        '.htm': 'html',
+        '.css': 'css',
+        '.json': 'json',
+        '.xml': 'xml',
+        '.yaml': 'yaml',
+        '.yml': 'yaml',
+        '.toml': 'toml',
+        '.md': 'markdown',
+        '.dockerfile': 'dockerfile',
+    }
+
     for doc in transformed:
         if "language" not in doc.metadata and doc.metadata.get("file_path"):
             file_path = doc.metadata["file_path"]
-            ext = ("." + file_path.split(".")[-1].lower()) if "." in file_path else ""
-            doc.metadata["language"] = ext.lstrip(".")
+            filename = file_path.split("/")[-1].lower()  # Get just the filename
+
+            # Special case: Dockerfile (no extension)
+            if filename == 'dockerfile':
+                doc.metadata["language"] = 'dockerfile'
+            # Special case: docker-compose files
+            elif 'docker-compose' in filename and (filename.endswith('.yml') or filename.endswith('.yaml')):
+                doc.metadata["language"] = 'yaml'
+            # Regular extension mapping
+            elif "." in file_path:
+                ext = "." + file_path.split(".")[-1].lower()
+                doc.metadata["language"] = EXTENSION_TO_LANGUAGE.get(ext, ext.lstrip("."))
+            else:
+                # No extension, use filename as language hint
+                doc.metadata["language"] = filename
+
             logging.debug(f"🔤 Added language '{doc.metadata['language']}' for {file_path}")
 
     _ensure_dump_raw_docs(repo, branch, transformed)
@@ -135,19 +182,48 @@ def ingest_component(
     else:
         # 2. Generate summaries for each code chunk
         logging.info(f"🔧 Generating summaries for {len(split_nodes)} nodes")
-        summary_extractor = SummaryExtractor(summaries=["self"], show_progress=True, llm=qwen_llm)
-        nodes_with_summaries = summary_extractor.extract(split_nodes)
+        try:
+            summary_extractor = SummaryExtractor(summaries=["self"], show_progress=True, llm=qwen_llm)
+            summary_metadata = summary_extractor.extract(split_nodes)
+
+            # Apply summary metadata back to nodes
+            for node, metadata in zip(split_nodes, summary_metadata):
+                node.metadata.update(metadata)
+
+            logging.info(f"✅ Summary extraction completed for {len(split_nodes)} nodes")
+        except Exception as e:
+            logging.error(f"❌ Summary extraction failed: {e}")
 
         # 3. Extract titles/topics for each chunk
-        logging.info(f"🔧 Extracting titles for {len(nodes_with_summaries)} nodes")
-        title_extractor = TitleExtractor(nodes=5, llm=qwen_llm)
-        nodes_with_titles = title_extractor.extract(nodes_with_summaries)
+        logging.info(f"🔧 Extracting titles for {len(split_nodes)} nodes")
+        try:
+            title_extractor = TitleExtractor(nodes=5, llm=qwen_llm)
+            title_metadata = title_extractor.extract(split_nodes)
+
+            # Apply title metadata back to nodes
+            for node, metadata in zip(split_nodes, title_metadata):
+                node.metadata.update(metadata)
+
+            logging.info(f"✅ Title extraction completed for {len(split_nodes)} nodes")
+        except Exception as e:
+            logging.error(f"❌ Title extraction failed: {e}")
 
         # 4. Extract keywords for searchability
-        logging.info(f"🔧 Extracting keywords for {len(nodes_with_titles)} nodes")
-        keyword_extractor = KeywordExtractor(keywords=10, llm=qwen_llm)
-        code_nodes = keyword_extractor.extract(nodes_with_titles)
+        logging.info(f"🔧 Extracting keywords for {len(split_nodes)} nodes")
+        try:
+            keyword_extractor = KeywordExtractor(keywords=10, llm=qwen_llm)
+            keyword_metadata = keyword_extractor.extract(split_nodes)
 
+            # Apply keyword metadata back to nodes
+            for node, metadata in zip(split_nodes, keyword_metadata):
+                node.metadata.update(metadata)
+
+            logging.info(f"✅ Keyword extraction completed for {len(split_nodes)} nodes")
+        except Exception as e:
+            logging.error(f"❌ Keyword extraction failed: {e}")
+
+        # All metadata has been applied to the original nodes
+        code_nodes = split_nodes
         logging.info(f"✅ Code processing completed with {len(code_nodes)} enriched nodes")
     if not code_nodes:
         logging.error(f"❌ Code pipeline failed - no nodes generated from {len(transformed)} documents")
@@ -170,20 +246,11 @@ def ingest_component(
     logging.info(f"📋 Created catalog document with {len(catalog_doc.text)} characters")
     catalog_nodes = list(build_catalog_pipeline(llm=qwen_llm).run([catalog_doc]))
     logging.info(f"📋 Catalog pipeline produced {len(catalog_nodes)} nodes")
-    _attach_common_metadata(
-        catalog_nodes,
-        namespace=namespace,
-        repo=repo,
-        branch=branch,
-        collection=collection,
-        component_kind=kind,
-        is_standalone=is_standalone,
-        run_id=uuid.UUID(int=0),  # no run_id for catalog-only nodes, keep stable
-        dev_forced=force,
-        doc_type="catalog",
-    )
 
+    # Generate run_id and attach metadata to both node types
     run_id = uuid.uuid4()
+
+    # Attach metadata to code nodes (primary content)
     _attach_common_metadata(
         code_nodes,
         namespace=namespace,
@@ -195,6 +262,20 @@ def ingest_component(
         run_id=run_id,
         dev_forced=force,
         doc_type="code",
+    )
+
+    # Attach metadata to catalog nodes (stable UUID for consistency)
+    _attach_common_metadata(
+        catalog_nodes,
+        namespace=namespace,
+        repo=repo,
+        branch=branch,
+        collection=collection,
+        component_kind=kind,
+        is_standalone=is_standalone,
+        run_id=uuid.UUID(int=0),  # stable run_id for catalog-only nodes
+        dev_forced=force,
+        doc_type="catalog",
     )
 
     # 5) Write & verify
