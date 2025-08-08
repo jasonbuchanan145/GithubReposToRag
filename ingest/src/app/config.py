@@ -31,11 +31,15 @@ class SettingsConfig:
     embed_dim: int = int(os.environ.get("EMBED_DIM", "384"))
     default_branch: str = os.environ.get("DEFAULT_BRANCH", "main")
 
+    # Qwen LLM Configuration
+    qwen_endpoint: str = os.environ.get("QWEN_ENDPOINT", "http://qwen:8000")
+    embed_model: str = os.environ.get("EMBED_MODEL", "intfloat/e5-small-v2")
+
     # Logical grouping
     default_collection: str = os.environ.get("DEFAULT_COLLECTION", "misc")
 
     # DEV mode flag to force standalone classification
-    dev_force_standalone: bool = _env_bool("DEV_FORCE_STANDALONE", False)
+    dev_force_standalone: bool = _env_bool("DEV_MODE", False)
 
 
 SETTINGS = SettingsConfig()

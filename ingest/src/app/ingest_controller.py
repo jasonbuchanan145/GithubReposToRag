@@ -7,18 +7,19 @@ from typing import Dict, List, Optional, Tuple, Union
 
 from llama_index.core import Document, VectorStoreIndex
 
-from config import SETTINGS
-from services.github_service import GithubService, fetch_repositories
-from services.cassandra_service import CassandraService
-from services.transform_service import (
+from app.config import SETTINGS
+from app.services.github_service import GithubService, fetch_repositories
+from app.services.cassandra_service import CassandraService
+from app.services.transform_service import (
     filter_documents,
     transform_special_files,
     infer_component_kind,
 )
-from pipelines.code_pipeline import build_code_pipeline
-from pipelines.catalog_pipeline import build_catalog_pipeline
-from catalog.catalog_builder import make_catalog_document
-from streaming import stream_event, stream_step
+from app.pipelines.code_pipeline import build_code_pipeline
+from app.pipelines.catalog_pipeline import build_catalog_pipeline
+from app.catalog.catalog_builder import make_catalog_document
+from app.streaming import stream_event, stream_step
+from app.llm_init import initialize_llm_settings
 
 
 def _ensure_dump_raw_docs(repo: str, branch: str, docs: List[Document]) -> None:
@@ -65,6 +66,7 @@ def ingest_component(
 
     Returns a dict with audit/verification stats.
     """
+
     branch = branch or SETTINGS.default_branch
     collection = collection or SETTINGS.default_collection
 
@@ -94,7 +96,11 @@ def ingest_component(
     stream_step("build_catalog")
     catalog_doc = make_catalog_document(repo, transformed, layer=layer, collection=collection, component_kind=kind)
     catalog_doc.metadata.update({"namespace": namespace, "branch": branch, "ingest_run_id": None})
-    catalog_nodes = list(build_catalog_pipeline().run([catalog_doc]))  # explicit list() for typing stability
+
+    # Create LLM instance and pass explicitly to catalog pipeline
+    from app.llm_init import QwenLLM
+    qwen_llm = QwenLLM()
+    catalog_nodes = list(build_catalog_pipeline(llm=qwen_llm).run([catalog_doc]))  # explicit list() for typing stability
     _attach_common_metadata(
         catalog_nodes,
         namespace=namespace,
@@ -110,7 +116,7 @@ def ingest_component(
 
     # 4) Build code nodes
     stream_step("build_code_nodes")
-    code_nodes = list(build_code_pipeline().run(transformed))
+    code_nodes = list(build_code_pipeline(qwen_llm).run(transformed))
     if not code_nodes:
         raise RuntimeError(f"No code nodes produced for repo={repo}")
 

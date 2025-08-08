@@ -1,7 +1,7 @@
 from __future__ import annotations
 import logging
-from ingest_controller import ingest_many
-from .config import SETTINGS
+from app.ingest_controller import ingest_many
+from app.config import SETTINGS
 
 
 if __name__ == "__main__":

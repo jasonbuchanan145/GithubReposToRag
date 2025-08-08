@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from cassandra.auth import PlainTextAuthProvider
 from cassandra.cluster import Cluster
 from llama_index.vector_stores.cassandra import CassandraVectorStore
-from scripts.src.config import SETTINGS
+from app.config import SETTINGS
 
 
 @dataclass

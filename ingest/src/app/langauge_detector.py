@@ -1,9 +1,3 @@
-import os
-from pathlib import Path
-
-from llama_index.core.node_parser import CodeSplitter
-
-import os
 from pathlib import Path
 from typing import Optional
 

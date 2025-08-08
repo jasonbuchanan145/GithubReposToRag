@@ -4,7 +4,7 @@ from typing import List
 import requests
 from llama_index.core import Document
 from llama_index.readers.github import GithubClient, GithubRepositoryReader
-from .config import SETTINGS
+from app.config import SETTINGS
 import logging
 
 class GithubService:

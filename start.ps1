@@ -36,10 +36,10 @@ try {
   & minikube -p minikube docker-env | Invoke-Expression
 
   Write-Host "Building rag-ingest..." -ForegroundColor Green
-  docker build -t localhost:5000/rag-ingest:latest -f scripts/Dockerfile .
+  docker build -t rag-ingest:latest -f ingest/Dockerfile .
 
   # Tag the image with no registry prefix for local use
-  docker tag localhost:5000/rag-ingest:latest rag-ingest:latest
+  docker tag rag-ingest:latest rag-ingest:latest
 
   Write-Host "Building rag-api..." -ForegroundColor Green
   docker build -t localhost:5000/rag-api:latest -f services/rag_api/Dockerfile .
@@ -169,10 +169,10 @@ try {
 
 if (-not $secretExists) {
   Write-Host ""
-  Write-Host "🔑 GitHub Token Required" -ForegroundColor Cyan
+  Write-Host "GitHub Token Required" -ForegroundColor Cyan
   Write-Host "The ingestion service needs a GitHub personal access token to fetch repositories." -ForegroundColor White
   Write-Host "Please create a token at: https://github.com/settings/tokens" -ForegroundColor White
-  Write-Host "Required scopes: 'repo' (for private repos) or 'public_repo' (for public repos only)" -ForegroundColor White
+  Write-Host "Required scopes: repo (for private repos) or public_repo (for public repos only)" -ForegroundColor White
   Write-Host ""
 
   do {
@@ -345,9 +345,3 @@ Write-Host "Services should be available at:" -ForegroundColor Yellow
 Write-Host "- API: http://localhost:8000" -ForegroundColor Yellow
 Write-Host "- Frontend: http://localhost:3000" -ForegroundColor Yellow
 Write-Host "- Cassandra: localhost:9042" -ForegroundColor Yellow
-
-# Test query
-#$body = @{ query = 'What does my ERC20 contract do?' } | ConvertTo-Json
-#Invoke-RestMethod -Uri http://localhost:8000/rag -Method Post -ContentType 'application/json' -Body $body
-
-#Start-Process http://localhost:3000

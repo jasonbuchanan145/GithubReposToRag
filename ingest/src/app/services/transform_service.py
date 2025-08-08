@@ -2,7 +2,7 @@ from __future__ import annotations
 import logging
 from typing import List
 from llama_index.core import Document
-from jupyter_notebook_handling import JupyterNotebookProcessor
+from app.services.jupyter_notebook_handling import JupyterNotebookProcessor
 
 
 SKIP_EXT = {

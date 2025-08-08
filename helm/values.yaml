@@ -81,11 +81,11 @@ qwen:
 image:
   pullPolicy: IfNotPresent
 ingestjob:
-  image: localhost:5000/rag-ingest:latest
+  image: rag-ingest:latest
   imagePullPolicy: Never
 
 ragapi:
-  image: jasonbuchanan/rag-api
+  image: rag-api:latest
   imagePullPolicy: IfNotPresent
 
 # Shared data volume for repository data and summaries
