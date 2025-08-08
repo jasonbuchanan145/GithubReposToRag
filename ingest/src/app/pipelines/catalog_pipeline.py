@@ -2,12 +2,12 @@ from __future__ import annotations
 from llama_index.core.ingestion import IngestionPipeline
 from llama_index.core.extractors import SummaryExtractor, TitleExtractor, KeywordExtractor
 from llama_index.core.node_parser import SentenceSplitter
-from llama_index.core.llms.base import BaseLLM
+from llama_index.core.llms import CustomLLM
 
 from app.llm_init import QwenLLM
 
 
-def build_catalog_pipeline(llm: BaseLLM = None) -> IngestionPipeline:
+def build_catalog_pipeline(llm: CustomLLM = None) -> IngestionPipeline:
     """Build catalog pipeline with explicit LLM configuration."""
     if llm is None:
         llm = QwenLLM()

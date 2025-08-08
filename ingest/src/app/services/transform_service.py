@@ -7,7 +7,7 @@ from app.services.jupyter_notebook_handling import JupyterNotebookProcessor
 
 SKIP_EXT = {
     ".csv", ".tsv", ".xlsx", ".xls", ".parquet", ".feather",
-    ".json", ".xml", ".jsonl", ".ndjson",
+    ".xml", ".jsonl", ".ndjson",  # Keep .json - it's important for configs
     ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp", ".ico",
     ".tiff", ".tif", ".psd",
     ".mp3", ".wav", ".mp4", ".avi", ".mov", ".mkv", ".flv",
@@ -15,6 +15,12 @@ SKIP_EXT = {
     ".exe", ".dll", ".so", ".dylib", ".bin",
     ".log", ".dump", ".backup",
     ".db", ".sqlite", ".sqlite3",
+}
+
+# Add specific JSON files that should be skipped (data files, not config)
+SKIP_JSON_PATTERNS = {
+    "data.json", "test-data.json", "sample.json", "mock.json",
+    "responses.json", "fixtures.json"
 }
 
 SKIP_NAMES = {
@@ -30,24 +36,47 @@ SKIP_NAMES = {
 
 
 def filter_documents(documents: List[Document]) -> List[Document]:
+    logging.info(f"🔍 Filtering {len(documents)} documents...")
     out: List[Document] = []
+    skipped_count = 0
+
     for doc in documents:
         path = doc.metadata.get("file_path", "")
         ext = ("." + path.split(".")[-1].lower()) if "." in path else ""
         name = path.split("/")[-1].lower()
-        if ext in SKIP_EXT or name in SKIP_NAMES:
+
+        # Special handling for JSON files - only skip data files, keep config files
+        if ext == ".json" and name in SKIP_JSON_PATTERNS:
+            logging.debug(f"  ❌ Skipping JSON data file {path}")
+            skipped_count += 1
             continue
+        elif ext in SKIP_EXT or name in SKIP_NAMES:
+            logging.debug(f"  ❌ Skipping {path} (ext: {ext}, name: {name})")
+            skipped_count += 1
+            continue
+
+        logging.debug(f"  ✅ Keeping {path} (ext: {ext})")
         out.append(doc)
+
+    logging.info(f"🔍 Filter results: {len(out)} kept, {skipped_count} skipped")
     return out
 
 
 def transform_special_files(documents: List[Document]) -> List[Document]:
+    logging.info(f"🔄 Transforming {len(documents)} documents...")
     transformed: List[Document] = []
+    notebook_count = 0
+
     for doc in documents:
         path = doc.metadata.get("file_path", "")
+        doc_length = len(doc.text) if doc.text else 0
+
         if path.endswith(".ipynb") and JupyterNotebookProcessor is not None:
+            notebook_count += 1
             try:
                 processed = JupyterNotebookProcessor.process_notebook(path)
+                processed_length = len(processed) if processed else 0
+                logging.debug(f"  📓 Processed notebook {path}: {doc_length} → {processed_length} chars")
                 transformed.append(
                     Document(text=processed, metadata={**doc.metadata, "content_type": "notebook", "is_processed": True})
                 )
@@ -55,7 +84,10 @@ def transform_special_files(documents: List[Document]) -> List[Document]:
                 logging.warning("Notebook transform failed for %s; keeping raw text", path, exc_info=True)
                 transformed.append(doc)
         else:
+            logging.debug(f"  📄 Keeping {path} as-is ({doc_length} chars)")
             transformed.append(doc)
+
+    logging.info(f"🔄 Transform results: {len(transformed)} docs ({notebook_count} notebooks processed)")
     return transformed
 
 

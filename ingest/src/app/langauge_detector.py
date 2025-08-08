@@ -1,3 +1,5 @@
+import logging
+import logging
 from pathlib import Path
 from typing import Optional
 
@@ -114,14 +116,14 @@ def create_code_splitter_safely(file_path=None, language=None, document_content=
 
     except LookupError as e:
         # If the specific language is not supported, fallback to text splitter
-        print(f"Language '{language}' not supported by tree-sitter, falling back to SentenceSplitter: {e}")
+        logging.warning(f"Language '{language}' not supported by tree-sitter, falling back to SentenceSplitter: {e}")
         from llama_index.core.node_parser import SentenceSplitter
         return SentenceSplitter(
             chunk_size=4000,
             chunk_overlap=200
         )
     except ImportError as e:
-        print(f"CodeSplitter unavailable due to missing dependency: {e}")
+        logging.warning(f"CodeSplitter unavailable due to missing dependency: {e}")
         from llama_index.core.node_parser import SentenceSplitter
         return SentenceSplitter(
             chunk_size=4000,
@@ -129,7 +131,7 @@ def create_code_splitter_safely(file_path=None, language=None, document_content=
         )
     except Exception as e:
         # Any other error, use generic text splitter
-        print(f"Error creating CodeSplitter, falling back to SentenceSplitter: {e}")
+        logging.warning(f"Error creating CodeSplitter, falling back to SentenceSplitter: {e}")
         from llama_index.core.node_parser import SentenceSplitter
         return SentenceSplitter(
             chunk_size=4000,

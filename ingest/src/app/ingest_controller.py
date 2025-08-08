@@ -84,23 +84,92 @@ def ingest_component(
     # 1) Load docs
     stream_step("load_docs", repo=repo, branch=branch)
     raw_docs = gh.load_repo_documents(repo, branch)
+    logging.info(f"📄 Loaded {len(raw_docs)} raw documents from GitHub")
+
     filtered = filter_documents(raw_docs)
+    logging.info(f"🔍 After filtering: {len(filtered)} documents remain")
+
     transformed = transform_special_files(filtered)
+    logging.info(f"🔄 After transformation: {len(transformed)} documents remain")
+
+    # Add language detection to document metadata before processing
+    for doc in transformed:
+        if "language" not in doc.metadata and doc.metadata.get("file_path"):
+            file_path = doc.metadata["file_path"]
+            ext = ("." + file_path.split(".")[-1].lower()) if "." in file_path else ""
+            doc.metadata["language"] = ext.lstrip(".")
+            logging.debug(f"🔤 Added language '{doc.metadata['language']}' for {file_path}")
+
     _ensure_dump_raw_docs(repo, branch, transformed)
 
     # 2) Determine kind
     kind = "standalone" if force else (component_kind or infer_component_kind(transformed))
     is_standalone = (kind == "standalone")
 
-    # 3) Build catalog doc → nodes
-    stream_step("build_catalog")
-    catalog_doc = make_catalog_document(repo, transformed, layer=layer, collection=collection, component_kind=kind)
-    catalog_doc.metadata.update({"namespace": namespace, "branch": branch, "ingest_run_id": None})
-
-    # Create LLM instance and pass explicitly to catalog pipeline
+    # Create LLM instance for both pipelines
     from app.llm_init import QwenLLM
     qwen_llm = QwenLLM()
-    catalog_nodes = list(build_catalog_pipeline(llm=qwen_llm).run([catalog_doc]))  # explicit list() for typing stability
+
+    # 3) Build code nodes from individual documents FIRST
+    stream_step("build_code_nodes")
+    logging.info(f"🔧 Processing {len(transformed)} documents through code pipeline")
+
+    # Debug: log document details before pipeline
+    for i, doc in enumerate(transformed[:3]):
+        logging.info(f"  📄 Input Doc {i}: {doc.metadata.get('file_path', 'unknown')} - {len(doc.text)} chars")
+        logging.info(f"    Content preview: {doc.text[:100]}...")
+
+    # Apply code processing transformations directly (IngestionPipeline had issues with our custom splitter)
+    logging.info(f"🔧 Processing documents through custom code pipeline")
+    from app.pipelines.code_pipeline import DynamicCodeSplitter
+    from llama_index.core.extractors import SummaryExtractor, TitleExtractor, KeywordExtractor
+
+    # 1. Split documents into nodes using language-aware splitter
+    splitter = DynamicCodeSplitter()
+    split_nodes = splitter.get_nodes_from_documents(transformed, show_progress=False)
+    logging.info(f"🔧 Code splitter generated {len(split_nodes)} nodes")
+
+    if not split_nodes:
+        logging.error("❌ Code splitter failed to generate nodes!")
+        code_nodes = []
+    else:
+        # 2. Generate summaries for each code chunk
+        logging.info(f"🔧 Generating summaries for {len(split_nodes)} nodes")
+        summary_extractor = SummaryExtractor(summaries=["self"], show_progress=True, llm=qwen_llm)
+        nodes_with_summaries = summary_extractor.extract(split_nodes)
+
+        # 3. Extract titles/topics for each chunk
+        logging.info(f"🔧 Extracting titles for {len(nodes_with_summaries)} nodes")
+        title_extractor = TitleExtractor(nodes=5, llm=qwen_llm)
+        nodes_with_titles = title_extractor.extract(nodes_with_summaries)
+
+        # 4. Extract keywords for searchability
+        logging.info(f"🔧 Extracting keywords for {len(nodes_with_titles)} nodes")
+        keyword_extractor = KeywordExtractor(keywords=10, llm=qwen_llm)
+        code_nodes = keyword_extractor.extract(nodes_with_titles)
+
+        logging.info(f"✅ Code processing completed with {len(code_nodes)} enriched nodes")
+    if not code_nodes:
+        logging.error(f"❌ Code pipeline failed - no nodes generated from {len(transformed)} documents")
+        # Log some document details for debugging
+        for i, doc in enumerate(transformed[:3]):  # First 3 docs
+            logging.error(f"  Doc {i}: {doc.metadata.get('file_path', 'unknown')} - {len(doc.text)} chars")
+        raise RuntimeError(f"No code nodes produced for repo={repo}")
+
+    # 4) Build catalog doc from code summaries → nodes
+    stream_step("build_catalog")
+    catalog_doc = make_catalog_document(
+        repo, transformed, 
+        code_nodes=code_nodes,  # Pass the processed code nodes
+        layer=layer, 
+        collection=collection, 
+        component_kind=kind,
+        llm=qwen_llm
+    )
+    catalog_doc.metadata.update({"namespace": namespace, "branch": branch, "ingest_run_id": None})
+    logging.info(f"📋 Created catalog document with {len(catalog_doc.text)} characters")
+    catalog_nodes = list(build_catalog_pipeline(llm=qwen_llm).run([catalog_doc]))
+    logging.info(f"📋 Catalog pipeline produced {len(catalog_nodes)} nodes")
     _attach_common_metadata(
         catalog_nodes,
         namespace=namespace,
@@ -113,12 +182,6 @@ def ingest_component(
         dev_forced=force,
         doc_type="catalog",
     )
-
-    # 4) Build code nodes
-    stream_step("build_code_nodes")
-    code_nodes = list(build_code_pipeline(qwen_llm).run(transformed))
-    if not code_nodes:
-        raise RuntimeError(f"No code nodes produced for repo={repo}")
 
     run_id = uuid.uuid4()
     _attach_common_metadata(

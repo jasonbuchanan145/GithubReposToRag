@@ -9,19 +9,15 @@ dependencies:
   - nbconvert
   # Git operations
   - gitpython
-  # Common Python packages
   - transformers>=4.41
   - pydantic=2.7.1
   - requests>=2.28.0
   - python-dotenv>=1.0.0
   - sentence-transformers>=5.0.0
-  # vLLM + (optional) GPU support
   - pytorch=2.3.*           # CPU build by default
-  # - pytorch-cuda=12.1      # ← uncomment if GPUs available
   - libgcc-ng
   - pip:
-      # Packages not available in conda-forge
-      - vllm==0.4.3
+      - vllm>=0.4.3
       # LlamaIndex dependencies (not in conda-forge)
       - llama-index-core>=0.10.0
       - llama-index-llms-openai>=0.1.0
