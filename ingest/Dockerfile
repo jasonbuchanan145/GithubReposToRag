@@ -8,18 +8,21 @@ RUN conda env create -f /tmp/environment.yml && \
 
 # Activate env for subsequent layers - Fix environment name
 SHELL ["conda", "run", "--no-capture-output", "-n", "rag-demo", "/bin/bash", "-c"]
-
 # ---------- app code ----------
 WORKDIR /app
-COPY scripts/ /app/scripts/
+
+# Copy just what pip needs first (better layer cache)
+COPY ingest/pyproject.toml /app/pyproject.toml
+# If you have a README and want it included:
+# COPY README.md /app/README.md
+
+# Copy the source package
+COPY ingest/src/ /app/src/
+
+# Optional: other files
 COPY cassandra/schema.cql /app/cassandra/schema.cql
 
-# Create __init__.py to make scripts a proper Python package
-RUN touch /app/scripts/__init__.py
+RUN pip install -e .
 
-# Set development mode to always recreate data
 ENV DEV_MODE=true
-
-# ---------- entrypoint ----------
-# Fix: Use consistent environment name and proper module path
-ENTRYPOINT ["conda", "run", "--no-capture-output", "-n", "rag-demo", "python", "-m", "scripts.ingest_repos"]
+ENTRYPOINT ["conda", "run", "--no-capture-output", "-n", "rag-demo", "python", "-m", "app"]

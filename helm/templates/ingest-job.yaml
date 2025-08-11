@@ -77,15 +77,6 @@ spec:
             - name: DATA_DIR
               value: "{{ .Values.sharedData.mountPath }}"
             {{- end }}
-          command:
-            - "conda"
-            - "run"
-            - "--no-capture-output"
-            - "-n"
-            - "rag-demo"
-            - "python"
-            - "-m"
-            - "scripts.ingest_repos"
           {{- if .Values.sharedData.enabled }}
           volumeMounts:
             - name: shared-data

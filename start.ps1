@@ -36,15 +36,14 @@ try {
   & minikube -p minikube docker-env | Invoke-Expression
 
   Write-Host "Building rag-ingest..." -ForegroundColor Green
-  docker build -t localhost:5000/rag-ingest:latest -f scripts/Dockerfile .
+  docker build -t rag-ingest:latest -f ingest/Dockerfile .
 
   # Tag the image with no registry prefix for local use
-  docker tag localhost:5000/rag-ingest:latest rag-ingest:latest
+  docker tag rag-ingest:latest rag-ingest:latest
 
   Write-Host "Building rag-api..." -ForegroundColor Green
-  # Uncomment when API Dockerfile is ready
-  # docker build -t localhost:5000/rag-api:latest -f services/rag_api/Dockerfile .
-  # docker tag localhost:5000/rag-api:latest rag-api:latest
+  docker build -t localhost:5000/rag-api:latest -f services/rag_api/Dockerfile .
+  docker tag localhost:5000/rag-api:latest rag-api:latest
 
   # Try to build frontend with a smaller context
   # Write-Host "Building rag-frontend..." -ForegroundColor Green
@@ -154,6 +153,56 @@ if ($namespaceExists) {
 # Create fresh namespace
 Write-Host "Creating fresh namespace..."
 kubectl create namespace rag
+
+# Check if GitHub token secret exists, if not prompt for it
+Write-Host "Checking for GitHub token secret..." -ForegroundColor Yellow
+$secretExists = $false
+try {
+  $secretCheck = kubectl -n rag get secret github-token -o name 2>$null
+  if ($secretCheck) {
+    $secretExists = $true
+    Write-Host "GitHub token secret already exists" -ForegroundColor Green
+  }
+} catch {
+  # Secret doesn't exist, which is expected for first run
+}
+
+if (-not $secretExists) {
+  Write-Host ""
+  Write-Host "GitHub Token Required" -ForegroundColor Cyan
+  Write-Host "The ingestion service needs a GitHub personal access token to fetch repositories." -ForegroundColor White
+  Write-Host "Please create a token at: https://github.com/settings/tokens" -ForegroundColor White
+  Write-Host "Required scopes: repo (for private repos) or public_repo (for public repos only)" -ForegroundColor White
+  Write-Host ""
+
+  do {
+    $githubToken = Read-Host -Prompt "Enter your GitHub personal access token" -AsSecureString
+    $plainToken = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($githubToken))
+
+    if ([string]::IsNullOrWhiteSpace($plainToken)) {
+      Write-Host "❌ Token cannot be empty. Please try again." -ForegroundColor Red
+    } elseif ($plainToken.Length -lt 20) {
+      Write-Host "❌ Token seems too short. GitHub tokens are typically 40+ characters. Please try again." -ForegroundColor Red
+    }
+  } while ([string]::IsNullOrWhiteSpace($plainToken) -or $plainToken.Length -lt 20)
+
+  Write-Host "Creating GitHub token secret..." -ForegroundColor Green
+  try {
+    kubectl -n rag create secret generic github-token --from-literal=token=$plainToken
+    Write-Host "✅ GitHub token secret created successfully!" -ForegroundColor Green
+
+    # Clear the token from memory for security
+    $plainToken = $null
+    $githubToken = $null
+    [System.GC]::Collect()
+
+  } catch {
+    Write-Host "❌ Failed to create GitHub token secret: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "You can create it manually with:" -ForegroundColor Yellow
+    Write-Host "kubectl -n rag create secret generic github-token --from-literal=token=<your-token>" -ForegroundColor Yellow
+    exit 1
+  }
+}
 
 # Update dependencies and install Helm chart
 Write-Host "Updating Helm dependencies..."
@@ -296,9 +345,3 @@ Write-Host "Services should be available at:" -ForegroundColor Yellow
 Write-Host "- API: http://localhost:8000" -ForegroundColor Yellow
 Write-Host "- Frontend: http://localhost:3000" -ForegroundColor Yellow
 Write-Host "- Cassandra: localhost:9042" -ForegroundColor Yellow
-
-# Test query
-#$body = @{ query = 'What does my ERC20 contract do?' } | ConvertTo-Json
-#Invoke-RestMethod -Uri http://localhost:8000/rag -Method Post -ContentType 'application/json' -Body $body
-
-#Start-Process http://localhost:3000
