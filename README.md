@@ -160,4 +160,4 @@ Contributions are welcome, although this project is still in the non-functional 
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the Apache License - see the LICENSE file for details.
