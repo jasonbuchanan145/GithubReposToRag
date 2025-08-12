@@ -9,7 +9,7 @@ SKIP_EXT = {
     ".csv", ".tsv", ".xlsx", ".xls", ".parquet", ".feather",
     ".xml", ".jsonl", ".ndjson",  # Keep .json - it's important for configs
     ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp", ".ico",
-    ".tiff", ".tif", ".psd",
+    ".tiff", ".tif", ".psd",".drawio",
     ".mp3", ".wav", ".mp4", ".avi", ".mov", ".mkv", ".flv",
     ".zip", ".tar", ".gz", ".rar", ".7z", ".bz2",
     ".exe", ".dll", ".so", ".dylib", ".bin",

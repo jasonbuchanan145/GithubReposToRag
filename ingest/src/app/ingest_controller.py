@@ -6,10 +6,16 @@ import uuid
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Union
 
-from llama_index.core import Document, VectorStoreIndex
+# Convert UUID to proper format for Cassandra
+from cassandra.util import uuid_from_time
+from llama_index.core import Document
+# Use IngestionPipeline to write nodes directly to vector store
+from llama_index.core.ingestion import IngestionPipeline
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 
 from app.catalog.catalog_builder import make_catalog_document
 from app.config import SETTINGS
+from app.llm_init import QwenLLM
 from app.pipelines.catalog_pipeline import build_catalog_pipeline
 from app.services.cassandra_service import CassandraService
 from app.services.github_service import GithubService, fetch_repositories
@@ -154,7 +160,6 @@ def ingest_component(
     is_standalone = (kind == "standalone")
 
     # Create LLM instance for both pipelines
-    from app.llm_init import QwenLLM
     qwen_llm = QwenLLM()
 
     # 3) Build code nodes from individual documents FIRST
@@ -244,7 +249,7 @@ def ingest_component(
     )
     catalog_doc.metadata.update({"namespace": namespace, "branch": branch, "ingest_run_id": None})
     logging.info(f"📋 Created catalog document with {len(catalog_doc.text)} characters")
-    catalog_nodes = list(build_catalog_pipeline(llm=qwen_llm).run([catalog_doc]))
+    catalog_nodes = list(build_catalog_pipeline(llm=qwen_llm).run(documents=[catalog_doc]))
     logging.info(f"📋 Catalog pipeline produced {len(catalog_nodes)} nodes")
 
     # Generate run_id and attach metadata to both node types
@@ -282,9 +287,21 @@ def ingest_component(
     stream_step("write_vector_store", table=SETTINGS.embeddings_table)
     before_total = cass.count_rows_total(session)
     try:
-        # write catalog (tiny) then code (big)
-        VectorStoreIndex.from_nodes(catalog_nodes, vector_store=vector_store, show_progress=False)
-        VectorStoreIndex.from_nodes(code_nodes, vector_store=vector_store, show_progress=True)
+        # Create pipeline that only embeds and writes to vector store (nodes are already processed)
+        write_pipeline = IngestionPipeline(
+            transformations=[
+                HuggingFaceEmbedding(model_name=SETTINGS.embed_model),  # Use configured embedding model
+            ],
+            vector_store=vector_store,
+        )
+
+        # Write catalog nodes (tiny) then code nodes (big)
+        logging.info(f"📝 Writing {len(catalog_nodes)} catalog nodes to vector store")
+        write_pipeline.run(nodes=catalog_nodes, show_progress=False)
+
+        logging.info(f"📝 Writing {len(code_nodes)} code nodes to vector store") 
+        write_pipeline.run(nodes=code_nodes, show_progress=True)
+
     except Exception:
         logging.exception("Cassandra write failed repo=%s ns=%s collection=%s kind=%s", repo, namespace, collection, kind)
         raise
@@ -296,11 +313,56 @@ def ingest_component(
             f"No new rows written to {SETTINGS.cassandra_keyspace}.{SETTINGS.embeddings_table} (repo={repo}, namespace={namespace})."
         )
 
-    # Audit
-    session.execute(
-        "INSERT INTO ingest_runs (run_id, namespace, repo, branch, collection, component_kind, started_at, finished_at, node_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (run_id, namespace, repo, branch, collection, kind, datetime.utcnow(), datetime.utcnow(), len(code_nodes)),
-    )
+    # Audit with debugging and proper parameter handling
+    try:
+        # Debug logging to identify the problematic parameter
+        logging.info(f"🔍 Audit parameters debug:")
+        logging.info(f"  run_id: {run_id} (type: {type(run_id)})")
+        logging.info(f"  namespace: '{namespace}' (type: {type(namespace)})")
+        logging.info(f"  repo: '{repo}' (type: {type(repo)})")
+        logging.info(f"  branch: '{branch}' (type: {type(branch)})")
+        logging.info(f"  collection: '{collection}' (type: {type(collection)})")
+        logging.info(f"  kind: '{kind}' (type: {type(kind)})")
+        logging.info(f"  node_count: {len(code_nodes)} (type: {type(len(code_nodes))})")
+
+        # Prepare parameters with proper types for Cassandra
+        current_time = datetime.utcnow()
+        audit_params = {
+            'run_id': run_id,  # Keep as UUID object for Cassandra
+            'namespace': str(namespace) if namespace else "",
+            'repo': str(repo) if repo else "",
+            'branch': str(branch) if branch else "",
+            'collection': str(collection) if collection else "",
+            'component_kind': str(kind) if kind else "",
+            'started_at': current_time,
+            'finished_at': current_time,
+            'node_count': int(len(code_nodes))
+        }
+
+        session.execute(
+            """
+            INSERT INTO ingest_runs (run_id, namespace, repo, branch, collection, component_kind, started_at, finished_at, node_count) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                audit_params['run_id'],
+                audit_params['namespace'], 
+                audit_params['repo'],
+                audit_params['branch'],
+                audit_params['collection'],
+                audit_params['component_kind'],
+                audit_params['started_at'],
+                audit_params['finished_at'],
+                audit_params['node_count']
+            ]
+        )
+        logging.info("✅ Audit record inserted successfully")
+
+    except Exception as audit_error:
+        logging.error(f"❌ Failed to insert audit record: {audit_error}")
+        logging.error(f"Parameters were: {audit_params}")
+        # Continue execution - don't let audit failure stop the ingestion
+        logging.warning("⚠️ Continuing without audit record")
 
     # 6) Close
     try:
