@@ -1,7 +1,7 @@
 import requests
 from cassandra.auth import PlainTextAuthProvider
 from cassandra.cluster import Cluster
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, Query, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi_health import health
 # LlamaIndex imports
@@ -38,7 +38,8 @@ def register_health_endpoints(app: FastAPI,
                 "application": {
                     "name": "RAG API Service",
                     "version": "1.0.0",
-                    "uptime": time.time() - _get_app_start_time(),
+                    "uptime_human_readable": _format_uptime(time.time() - _get_app_start_time()),
+                    "uptime_ms": time.time() - _get_app_start_time(),
                     "timestamp": datetime.utcnow().isoformat()
                 },
                 "system": {
@@ -124,6 +125,10 @@ def register_health_endpoints(app: FastAPI,
         # Add response time
         health_checks["details"]["response_time_ms"] = (time.time() - start_time) * 1000
 
+        # Return appropriate HTTP status code based on health status
+        if health_checks["status"] == "DOWN":
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=health_checks)
+
         return health_checks
 
 
@@ -133,3 +138,26 @@ def _get_app_start_time():
     if _app_start_time is None:
         _app_start_time = time.time()
     return _app_start_time
+
+
+def _format_uptime(uptime_seconds):
+    """Format uptime in human-readable format"""
+    if uptime_seconds < 60:
+        return f"{uptime_seconds:.1f} seconds"
+
+    days = int(uptime_seconds // 86400)
+    hours = int((uptime_seconds % 86400) // 3600)
+    minutes = int((uptime_seconds % 3600) // 60)
+    seconds = int(uptime_seconds % 60)
+
+    parts = []
+    if days > 0:
+        parts.append(f"{days} day{'s' if days != 1 else ''}")
+    if hours > 0:
+        parts.append(f"{hours} hour{'s' if hours != 1 else ''}")
+    if minutes > 0:
+        parts.append(f"{minutes} minute{'s' if minutes != 1 else ''}")
+    if seconds > 0 or not parts:
+        parts.append(f"{seconds} second{'s' if seconds != 1 else ''}")
+
+    return ", ".join(parts)
