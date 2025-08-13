@@ -15,40 +15,115 @@ A specialized RAG (Retrieval Augmented Generation) system for intelligent code r
 
 ```mermaid
 graph TD
-    subgraph "Ingestion Pipeline"
-        A[GitHub Repo] -->|GithubRepositoryReader| B[Raw Documents]
-        B -->|NotebookProcessor| C[Processed Documents]
-        C -->|Code & Text Splitters| D[Document Chunks]
-        D -->|Extractors| E[Enhanced Nodes]
-        E -->|Embedding| F[Vector DB]
-    end
+%% ===========================
+%% Ingestion Pipeline (updated)
+%% ===========================
+subgraph "Ingestion Pipeline"
+direction TB
 
-    subgraph "Query Pipeline"
-        Q[User Query] -->|REST API| API[RAG API Service]
-        API -->|Query Classification| QC{Query Type}
-        QC -->|High-Level| HL[Hierarchical Retriever]
-        QC -->|Code-Specific| CS[Code Retriever]
+%% Repo discovery & loading
+R0[Repo Discovery] -->|"GraphQL fetch_repositories()"| R1[Repo List]
+R1 -->|"for each repo/branch"| A[GithubRepositoryReader]
+A -->|"concurrent_requests=6"| B[Raw Documents]
+B -->|"optional dump (DATA_DIR)"| Bdump[(raw_documents_*.json)]
 
-        subgraph "Vector Store Integration"
-            DB[(Cassandra)]-->|Repository Summaries| HL
-            DB-->|Directory Summaries| HL
-            DB-->|File & Code Chunks| CS
-        end
+%% Filtering
+B -->|"filter_documents()"| C[Filtered Documents]
 
-        HL --> R[Retrieval Results]
-        CS --> R
-        R -->|Context Enhancement| API
-        API -->|Augmented Prompt| LLM[LLM Response]
-        LLM -->|Response Formatting| API
-        API --> User
-    end
+%% Notebook decision BEFORE component-kind routing
+C --> D{"Is Jupyter Notebook?"}
+D -- Yes --> JN["Notebook Handling:\n• remove noise/outputs\n• strip artifacts\n • flag as standalone"]
+D -- No --> ND["Generic processing"]
 
-    F ---|Stored in| DB
-    Web[Web UI] -->|HTTP Requests| API
+%% Normalize only notebooks, then join
+JN --> NBD[Normalized Notebook Docs]
+ND --> J["Preprocessed Docs"]
+NBD --> J
+%% Component kind inference after the join
+J -->|"infer_component_kind()"| CK{Component Kind\nservice vs standalone}
 
-    %% Feedback Loop
-    API -->|Interaction History| DB
-    LLM -->|Query Refinement| QC
+%% Catalog (text) pipeline
+subgraph "Catalog Pipeline"
+direction TB
+CP0["SentenceSplitter (chunk=1500, overlap=100)"]
+CP1["SimpleNodeParser (chunk=1500, overlap=100)"]
+CP2["Extractors\n• Summary\n• Title (nodes=3)\n• Keywords (10)"]
+end
+
+%% Code pipeline
+subgraph "Code Pipeline"
+direction TB
+DP0["DynamicCodeSplitter (language inferred from metadata)"]
+DP1["Extractors\n• Summary\n• Title (nodes=5)\n• Keywords (10)"]
+end
+
+%% Routing by component kind (high-level text vs source code)
+CK -->|"routes text/docs"| CP0
+CK -->|"routes source code"| DP0
+
+%% Node outputs
+CP0 --> CP1 --> CP2 --> Ncat[Catalog Nodes]
+DP0 --> DP1 --> Ncode[Code Nodes]
+
+%% Metadata & embeddings
+subgraph "Metadata & Embedding"
+direction TB
+M0[Attach Common Metadata\nnamespace, repo, branch, collection,\ncomponent_kind, is_standalone,\ningest_run_id, path, language, doc_type]
+M1["Embedding (intfloat/e5-small-v2, dim=384)"]
+end
+
+Ncat --> M0
+Ncode --> M0
+M0 --> M1 --> F["Vector DB Upsert (CassandraVectorStore)\nkeyspace=vector_store, table=embeddings"]
+
+%% Auditing
+subgraph "Audit & Stats (Cassandra)"
+direction TB
+A0[ingest_runs table]
+A1[run_id, namespace, repo, branch,\ncollection, component_kind,\nstarted_at, finished_at, node_count]
+end
+
+%% Settings references
+R0 -. uses .-> S0["SETTINGS (GITHUB_USER/TOKEN, DEFAULT_BRANCH)"]
+M1 -. uses .-> S1["SETTINGS (EMBED_MODEL, EMBED_DIM)"]
+F  -. uses .-> S2["SETTINGS (CASSANDRA_HOST/PORT/KEYSPACE/TABLE)"]
+
+M0 -->|"counts"| A0
+F  -->|"final node_count"| A1
+end
+
+%% ===========================
+%% Query Pipeline (unchanged)
+%% ===========================
+subgraph "Query Pipeline"
+Q[User Query] -->|REST API| API[RAG API Service]
+API -->|Query Classification| QC{Query Type}
+QC -->|High-Level| HL[Hierarchical Retriever]
+QC -->|Code-Specific| CS[Code Retriever]
+
+subgraph "Vector Store Integration"
+DB[(Cassandra)]-->|Repository Summaries| HL
+DB-->|Directory Summaries| HL
+DB-->|File & Code Chunks| CS
+end
+
+HL --> R[Retrieval Results]
+CS --> R
+R -->|Context Enhancement| API
+API -->|Augmented Prompt| LLM[LLM Response]
+LLM -->|Response Formatting| API
+API --> User
+end
+
+%% System edges outside subgraphs
+F ---|Stored in| DB
+Web[Web UI] -->|HTTP Requests| API
+
+%% Feedback Loop (kept)
+API -->|Interaction History| DB
+LLM -->|Query Refinement| QC
+
+
 ```
 
 ## 🚀 Getting Started

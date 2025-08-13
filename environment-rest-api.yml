@@ -6,18 +6,19 @@ dependencies:
   - cassandra-driver=3.28.*
   # API dependencies
   - fastapi>=0.111.0
-  - fastapi-health>=0.4.0
   - uvicorn>=0.29.0
   # Common Python packages
   - pydantic>=2.7.1
   - requests>=2.28.0
   - python-dotenv>=1.0.0
+  - psutil
   # PyTorch CPU version (more compatible)
   - pytorch>=2.0
   - transformers>=4.41
   - libgcc-ng
   - pip:
       # Packages not available in conda-forge
+      - fastapi-health>=0.4.0
       - sentence-transformers>=2.0.0
       - llama-index-core>=0.10.0
       - llama-index-vector-stores-cassandra>=0.1.1

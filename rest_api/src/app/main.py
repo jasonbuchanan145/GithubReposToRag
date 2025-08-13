@@ -19,6 +19,7 @@ from pydantic import BaseModel
 import requests
 from cassandra.cluster import Cluster
 from cassandra.auth import PlainTextAuthProvider
+from app.health import register_health_endpoints
 
 # Configure logging
 logging.basicConfig(
@@ -140,9 +141,6 @@ def initialize_llamaindex():
 
 # Create connection to Cassandra and set up the vector store
 def setup_vector_store() -> CassandraVectorStore:
-    """Set up the Cassandra vector store."""
-    from cassandra.cluster import Cluster
-    from cassandra.auth import PlainTextAuthProvider
 
     logging.info(f"🔌 Connecting to Cassandra at {CASSANDRA_HOST}:{CASSANDRA_PORT}")
 
@@ -205,8 +203,7 @@ async def startup_event():
     """Initialize services on startup."""
     global global_vector_store, global_index
 
-    logging.info("🚀 Starting RAG API service...")
-
+    logging.info("Starting RAG API service...")
     # Initialize LlamaIndex
     initialize_llamaindex()
 
@@ -216,17 +213,19 @@ async def startup_event():
     # Create the index from vector store
     global_index = VectorStoreIndex.from_vector_store(global_vector_store)
 
-    logging.info("✅ RAG API service initialized successfully")
+    # Register health endpoints
+    register_health_endpoints(
+        app=app,
+        CASSANDRA_USERNAME=CASSANDRA_USERNAME,
+        CASSANDRA_PASSWORD=CASSANDRA_PASSWORD,
+        CASSANDRA_HOST=CASSANDRA_HOST,
+        CASSANDRA_PORT=CASSANDRA_PORT,
+        CASSANDRA_KEYSPACE=CASSANDRA_KEYSPACE,
+        QWEN_ENDPOINT=QWEN_ENDPOINT,
+        global_index=global_index
+    )
 
-@app.get("/status")
-async def status():
-    """Service status endpoint."""
-    return {
-        "status": "healthy",
-        "qwen_endpoint": QWEN_ENDPOINT,
-        "cassandra_host": CASSANDRA_HOST,
-        "index_ready": global_index is not None
-    }
+    logging.info("✅ RAG API service initialized successfully")
 
 # Define response model
 class RAGResponse(BaseModel):
@@ -288,11 +287,3 @@ async def rag(request: QueryRequest) -> RAGResponse:
         logging.error(f"❌ Error executing query: {e}")
         raise HTTPException(status_code=500, detail=f"Error processing query: {str(e)}")
 
-@app.get("/health")
-async def health_check():
-    """Health check endpoint."""
-    return {"status": "healthy"}
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
