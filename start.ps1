@@ -42,7 +42,7 @@ try {
   docker tag rag-ingest:latest rag-ingest:latest
 
   Write-Host "Building rag-api..." -ForegroundColor Green
-  docker build -t localhost:5000/rag-api:latest -f services/rag_api/Dockerfile .
+  docker build -t localhost:5000/rag-api:latest -f rest_api/Dockerfile .
   docker tag localhost:5000/rag-api:latest rag-api:latest
 
   # Try to build frontend with a smaller context
