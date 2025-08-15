@@ -60,9 +60,9 @@ spec:
               exit 1
       containers:
         - name: rag-worker
-          image: rag-api:latest
+          image: rag-worker:latest
+          command: ["conda","run","--no-capture-output","-n","worker","python","-m","arq","worker.WorkerSettings"]
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command: [ "arq","app.worker.WorkerSettings" ]
           env:
             - name: REDIS_URL
               value: "redis://:changeme@redis-master:6379/0"
@@ -84,6 +84,7 @@ spec:
               value: "1"
           # simple liveness: arq will exit non-zero if it crashes; kube restarts
           livenessProbe:
-            exec: { command: ["sh","-c","ps aux | grep -v grep | grep -q 'python.*arq' || exit 1"] }
+            exec:
+              command: ["sh","-c","pgrep -f 'python -m arq .*WorkerSettings' >/dev/null"]
             initialDelaySeconds: 20
             periodSeconds: 30

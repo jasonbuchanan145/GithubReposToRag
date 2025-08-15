@@ -1,21 +1,19 @@
-# Worker image with the heavy deps (LlamaIndex, Cassandra, Torch, etc.)
-FROM mambaorg/micromamba:1.5.8
+FROM continuumio/miniconda3 AS base
 
 # Create the worker env
 COPY environment-worker.yaml /tmp/environment.yml
-RUN micromamba env create -f /tmp/environment.yml -y && micromamba clean --all -y
+RUN conda env create -f /tmp/environment.yml && \
+    conda clean -afy
 
-# Run all subsequent commands inside the env
-SHELL ["micromamba", "run", "-n", "rag-worker", "/bin/bash", "-lc"]
-
-# App code
+# Activate env for subsequent layers - Fix environment name
+SHELL ["conda", "run", "--no-capture-output", "-n", "worker", "/bin/bash", "-c"]
+# ---------- app code ----------
 WORKDIR /app
-# Copy only what the worker needs + shared package
-COPY rag_worker/ /app/rag_worker/
+COPY rag_worker/pyproject.toml /app/pyproject.toml
+COPY rag_worker/src /app/src
 COPY rag_shared/ /app/rag_shared/
 
 # Make shared imports work
 ENV PYTHONPATH=/app
-
-# Default command: run the arq worker
-CMD ["arq", "rag_worker.worker.WorkerSettings"]
+RUN pip install -e .
+RUN python -c "import arq, sys; print('arq', arq.__version__)"

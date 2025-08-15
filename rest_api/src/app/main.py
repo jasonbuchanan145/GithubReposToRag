@@ -40,5 +40,5 @@ async def on_startup():
         CASSANDRA_PORT=CASSANDRA_PORT,
         CASSANDRA_KEYSPACE=CASSANDRA_KEYSPACE,
         QWEN_ENDPOINT=QWEN_ENDPOINT,
-        global_index="embeddings",  # indices now managed inside services per-level
+        global_index=None,  # indices now managed inside services per-level
     )

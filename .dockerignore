@@ -18,7 +18,7 @@ minikube    # the local cluster’s data if it lives inside the repo
 !frontend/nextjs-app/**
 !cassandra/**
 !environment-scripts.yml
-!environment-rest-api.yml
+!environment-rest-api.yaml
 
 **/*.sock
 **/*.socket

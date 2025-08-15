@@ -18,7 +18,7 @@ spec:
     spec:
       containers:
         - name: qwen
-          image: vllm/vllm-openai:latest   # <- Keep GPU image
+          image: vllm/vllm-openai:latest
           command: [ "python3", "-m", "vllm.entrypoints.openai.api_server" ]
           args:
             - "--model"

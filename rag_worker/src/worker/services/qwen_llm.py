@@ -3,7 +3,7 @@ import requests
 from typing import Any
 from llama_index.core.llms import CustomLLM, CompletionResponse, LLMMetadata
 from llama_index.core.llms.callbacks import llm_completion_callback
-from app.config import QWEN_ENDPOINT, QWEN_MODEL, QWEN_MAX_OUTPUT
+from rag_shared.config import QWEN_ENDPOINT, QWEN_MODEL, QWEN_MAX_OUTPUT
 
 class QwenLLM(CustomLLM):
     model_name: str = QWEN_MODEL

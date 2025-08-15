@@ -1,31 +1,24 @@
-name: rag
+name: worker
 channels:
+  - pytorch        # add this
   - conda-forge
 dependencies:
   - python=3.11
   - pip
   - uvicorn>=0.30
-  - fastapi>=0.112
-  - starlette>=0.38
   - pydantic>=2.7
-  - orjson>=3.10         # faster JSON (FastAPI can use this)
-  - uvloop>=0.19         # faster event loop (Linux)
+  - uvloop>=0.19
   - httpx>=0.27
   - requests>=2.32
-  - redis-py>=5.0        # 'redis' package
+  - redis-py>=5.0
+  - pytorch>=2.3    # conda package
   - pip:
-    - arq>=0.25.0      # async job queue (uses redis)
-    - sse-starlette>=2.0.0  # optional; StreamingResponse works fine without it
-
-    - llama-index>=0.11.0
-    - llama-index-vector-stores-cassandra>=0.2.2
-    - llama-index-embeddings-huggingface>=0.2.0
-    - cassandra-driver>=3.29
-    # ---- Embeddings stack (for query-time embedding via HuggingFaceEmbedding)
-    - transformers>=4.42
-    - sentence-transformers>=3.0
-    - pytorch>=2.3
-    - cpuonly                 # <- on conda-forge/pytorch channel use 'cpuonly'; if missing, omit
-    # ---- Utils
-    - numpy>=1.26
-    - python-dotenv>=1.0
+      - arq>=0.25.0
+      - llama-index>=0.11.0
+      - llama-index-vector-stores-cassandra>=0.2.2
+      - llama-index-embeddings-huggingface>=0.2.0
+      - cassandra-driver>=3.29
+      - transformers>=4.42
+      - sentence-transformers>=3.0
+      - numpy>=1.26
+      - python-dotenv>=1.0

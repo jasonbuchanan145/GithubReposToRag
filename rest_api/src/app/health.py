@@ -105,12 +105,11 @@ def register_health_endpoints(app: FastAPI,
                     }
                 }
             else:
-
                 health_checks["components"]["vector_index"] = {
                     "status": "UP",
                     "details": {"initialized": False}
                 }
-                health_checks["status"] = "DOWN"
+                health_checks["status"] = "UP"
         except Exception as e:
             health_checks["components"]["vector_index"] = {
                 "status": "DOWN",

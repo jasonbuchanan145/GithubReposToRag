@@ -1,7 +1,7 @@
 from cassandra.cluster import Cluster
 from cassandra.auth import PlainTextAuthProvider
 from llama_index.vector_stores.cassandra import CassandraVectorStore
-from app.config import (
+from rag_shared.config import (
     CASSANDRA_HOST, CASSANDRA_PORT, CASSANDRA_USERNAME, CASSANDRA_PASSWORD,
     CASSANDRA_KEYSPACE, EMBED_DIM
 )
