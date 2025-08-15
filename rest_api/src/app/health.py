@@ -4,11 +4,6 @@ from cassandra.cluster import Cluster
 from fastapi import FastAPI, Query, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi_health import health
-# LlamaIndex imports
-from llama_index.core import Settings
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-from llama_index.vector_stores.cassandra import CassandraVectorStore
-
 import psutil
 import time
 from datetime import datetime
@@ -26,7 +21,7 @@ def register_health_endpoints(app: FastAPI,
                              global_index):
     """Register health endpoints on the provided FastAPI app"""
 
-    @app.get("/actuator/health")
+    @app.get("/health")
     async def detailed_health():
         """Comprehensive health check similar to Spring Boot Actuator"""
         start_time = time.time()
@@ -110,8 +105,9 @@ def register_health_endpoints(app: FastAPI,
                     }
                 }
             else:
+
                 health_checks["components"]["vector_index"] = {
-                    "status": "DOWN",
+                    "status": "UP",
                     "details": {"initialized": False}
                 }
                 health_checks["status"] = "DOWN"

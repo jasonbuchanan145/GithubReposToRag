@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>RAG Job Test</title>
+</head>
+<body>
+<h1>RAG Query Test</h1>
+<label for="query"></label><input type="text" id="query" placeholder="Enter your query" size="100">
+<button id="start">Submit Query</button>
+<button id="cancel">Cancel Job</button>
+<pre id="log"></pre>
+
+<script>
+    let jobId = null;
+    let eventSource = null;
+
+    document.getElementById('start').onclick = async () => {
+        const query = document.getElementById('query').value;
+        const resp = await fetch('/rag/jobs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query })
+        });
+        const data = await resp.json();
+        jobId = data.job_id;
+        document.getElementById('log').textContent += `Job started: ${jobId}\n`;
+
+        eventSource = new EventSource(`/rag/jobs/${jobId}/events`);
+        eventSource.onmessage = (e) => {
+            document.getElementById('log').textContent += e.data + '\n';
+        };
+    };
+
+    document.getElementById('cancel').onclick = async () => {
+        if (jobId) {
+            await fetch(`/rag/jobs/${jobId}/cancel`, {method: 'POST'});
+            document.getElementById('log').textContent += 'Cancel requested\n';
+        }
+    };
+</script>
+</body>
+</html>
