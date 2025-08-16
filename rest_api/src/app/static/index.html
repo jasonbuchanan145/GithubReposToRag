@@ -1,43 +1,320 @@
 <!DOCTYPE html>
-<html>
+<html lang="en" class="h-full">
 <head>
     <meta charset="UTF-8">
-    <title>RAG Job Test</title>
-</head>
-<body>
-<h1>RAG Query Test</h1>
-<label for="query"></label><input type="text" id="query" placeholder="Enter your query" size="100">
-<button id="start">Submit Query</button>
-<button id="cancel">Cancel Job</button>
-<pre id="log"></pre>
-
-<script>
-    let jobId = null;
-    let eventSource = null;
-
-    document.getElementById('start').onclick = async () => {
-        const query = document.getElementById('query').value;
-        const resp = await fetch('/rag/jobs', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query })
-        });
-        const data = await resp.json();
-        jobId = data.job_id;
-        document.getElementById('log').textContent += `Job started: ${jobId}\n`;
-
-        eventSource = new EventSource(`/rag/jobs/${jobId}/events`);
-        eventSource.onmessage = (e) => {
-            document.getElementById('log').textContent += e.data + '\n';
-        };
-    };
-
-    document.getElementById('cancel').onclick = async () => {
-        if (jobId) {
-            await fetch(`/rag/jobs/${jobId}/cancel`, {method: 'POST'});
-            document.getElementById('log').textContent += 'Cancel requested\n';
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Repository to RAG Demo</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        'dark-bg': '#0f0f23',
+                        'dark-surface': '#1a1a2e',
+                        'dark-border': '#16213e',
+                        'dark-text': '#e2e8f0',
+                        'dark-text-secondary': '#94a3b8',
+                        'accent': '#3b82f6',
+                        'accent-hover': '#2563eb'
+                    }
+                }
+            }
         }
-    };
-</script>
+    </script>
+</head>
+<body class="h-full bg-dark-bg text-dark-text">
+    <div id="app" class="h-full flex flex-col">
+        <!-- Header -->
+        <header class="bg-dark-surface border-b border-dark-border px-6 py-4">
+            <h1 class="text-xl font-semibold text-center">Repository to RAG Demo</h1>
+        </header>
+
+        <!-- Chat Messages Container -->
+        <div class="flex-1 overflow-y-auto px-4 py-6" ref="chatContainer">
+            <div class="max-w-4xl mx-auto space-y-6">
+                <!-- Welcome Message -->
+                <div v-if="messages.length === 0" class="text-center text-dark-text-secondary py-12">
+                    <div class="text-4xl mb-4">🤖</div>
+                    <p class="text-lg mb-2">Welcome to the Repository RAG Demo</p>
+                    <p>Ask questions about your codebase and get intelligent responses!</p>
+                </div>
+
+                <!-- Messages -->
+                <div v-for="message in messages" :key="message.id" class="flex" 
+                     :class="message.type === 'user' ? 'justify-end' : 'justify-start'">
+
+                    <!-- User Message -->
+                    <div v-if="message.type === 'user'" 
+                         class="bg-accent text-white px-4 py-3 rounded-2xl rounded-br-sm max-w-xs md:max-w-md lg:max-w-lg">
+                        {{ message.content }}
+                    </div>
+
+                    <!-- AI Message -->
+                    <div v-else class="max-w-xs md:max-w-md lg:max-w-2xl">
+                        <div class="bg-dark-surface border border-dark-border px-4 py-3 rounded-2xl rounded-bl-sm">
+                            <!-- Loading State -->
+                            <div v-if="message.loading" class="flex items-center space-x-3">
+                                <div class="animate-spin rounded-full h-5 w-5 border-b-2 border-accent"></div>
+                                <span class="text-dark-text-secondary">
+                                    {{ message.currentIteration ? `Processing iteration ${message.currentIteration}...` : 'Generating response...' }}
+                                </span>
+                                <button v-if="currentJobId" @click="cancelJob" 
+                                        class="text-red-400 hover:text-red-300 text-sm underline">
+                                    Stop
+                                </button>
+                            </div>
+
+                            <!-- Final Answer -->
+                            <div v-else-if="message.answer" class="space-y-4">
+                                <div class="prose prose-invert max-w-none">
+                                    <p class="whitespace-pre-wrap" v-html="formatBoldText(message.answer)"></p>
+                                </div>
+
+                                <!-- Sources -->
+                                <div v-if="message.sources && message.sources.length > 0" class="space-y-2">
+                                    <button @click="message.showSources = !message.showSources" 
+                                            class="flex items-center space-x-2 text-accent hover:text-accent-hover text-sm">
+                                        <svg class="w-4 h-4 transform transition-transform" 
+                                             :class="message.showSources ? 'rotate-90' : ''"
+                                             fill="currentColor" viewBox="0 0 20 20">
+                                            <path d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z"/>
+                                        </svg>
+                                        <span>{{ message.sources.length }} source{{ message.sources.length > 1 ? 's' : '' }}</span>
+                                    </button>
+
+                                    <div v-show="message.showSources" class="space-y-3 pl-6">
+                                        <div v-for="(source, idx) in message.sources" :key="idx" 
+                                             class="bg-dark-bg border border-dark-border rounded-lg p-3 text-sm">
+                                            <div class="font-medium text-accent mb-2">{{ source.metadata.file_name }}</div>
+                                            <div class="text-dark-text-secondary mb-2">{{ source.metadata.file_path }}</div>
+                                            <div class="bg-gray-800 rounded p-2 text-xs font-mono overflow-x-auto">
+                                                {{ source.text }}
+                                            </div>
+                                            <div class="text-xs text-dark-text-secondary mt-2">
+                                                Score: {{ source.score.toFixed(4) }}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Event Details Toggle -->
+                                <button @click="message.showEvents = !message.showEvents" 
+                                        class="flex items-center space-x-2 text-dark-text-secondary hover:text-dark-text text-sm">
+                                    <svg class="w-4 h-4 transform transition-transform" 
+                                         :class="message.showEvents ? 'rotate-90' : ''"
+                                         fill="currentColor" viewBox="0 0 20 20">
+                                        <path d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z"/>
+                                    </svg>
+                                    <span>View processing details</span>
+                                </button>
+
+                                <div v-show="message.showEvents" class="bg-dark-bg border border-dark-border rounded-lg p-3 text-xs font-mono">
+                                    <div v-for="event in message.events" :key="event.timestamp" class="mb-2">
+                                        <span class="text-dark-text-secondary">{{ formatTime(event.timestamp) }}</span>
+                                        <span class="ml-2">{{ JSON.stringify(event.data) }}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Input Area -->
+        <div class="bg-dark-surface border-t border-dark-border p-4">
+            <div class="max-w-4xl mx-auto">
+                <div class="flex space-x-3">
+                    <div class="flex-1 relative">
+                        <input 
+                            v-model="currentQuery"
+                            @keydown.enter="!isLoading && submitQuery()"
+                            :disabled="isLoading"
+                            type="text" 
+                            placeholder="Ask about your codebase..."
+                            class="w-full bg-dark-bg border border-dark-border rounded-full px-4 py-3 pr-12 text-dark-text placeholder-dark-text-secondary focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent disabled:opacity-50"
+                        />
+                        <button 
+                            @click="submitQuery"
+                            :disabled="isLoading || !currentQuery.trim()"
+                            class="absolute right-2 top-1/2 transform -translate-y-1/2 p-2 text-accent hover:text-accent-hover disabled:text-dark-text-secondary disabled:cursor-not-allowed transition-colors"
+                        >
+                            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                                <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { createApp, ref, nextTick } = Vue;
+
+        createApp({
+            setup() {
+                const messages = ref([]);
+                const currentQuery = ref('');
+                const isLoading = ref(false);
+                const currentJobId = ref(null);
+                const eventSource = ref(null);
+                const chatContainer = ref(null);
+
+                const formatTime = (timestamp) => {
+                    return new Date(timestamp).toLocaleTimeString();
+                };
+
+                const formatBoldText = (text) => {
+                    if (!text) return '';
+                    // Replace **text** with <strong>text</strong>
+                    return text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+                };
+
+                const scrollToBottom = async () => {
+                    await nextTick();
+                    if (chatContainer.value) {
+                        chatContainer.value.scrollTop = chatContainer.value.scrollHeight;
+                    }
+                };
+
+                const submitQuery = async () => {
+                    if (!currentQuery.value.trim() || isLoading.value) return;
+
+                    const query = currentQuery.value;
+                    currentQuery.value = '';
+                    isLoading.value = true;
+
+                    // Add user message
+                    const userMessage = {
+                        id: Date.now(),
+                        type: 'user',
+                        content: query
+                    };
+                    messages.value.push(userMessage);
+
+                    // Add AI message placeholder
+                    const aiMessage = {
+                        id: Date.now() + 1,
+                        type: 'ai',
+                        loading: true,
+                        currentIteration: null,
+                        events: [],
+                        showEvents: false,
+                        showSources: false
+                    };
+                    messages.value.push(aiMessage);
+
+                    await scrollToBottom();
+
+                    try {
+                        // Start RAG job
+                        const resp = await fetch('/rag/jobs', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ query })
+                        });
+                        const data = await resp.json();
+                        currentJobId.value = data.job_id;
+
+                        // Listen to events
+                        eventSource.value = new EventSource(`/rag/jobs/${data.job_id}/events`);
+
+                        eventSource.value.onmessage = (e) => {
+                            try {
+                                const eventData = JSON.parse(e.data);
+                                const timestamp = Date.now();
+
+                                // Add event to current AI message
+                                aiMessage.events.push({
+                                    timestamp,
+                                    data: eventData
+                                });
+
+                                // Update iteration count
+                                if (eventData.event === 'iteration') {
+                                    aiMessage.currentIteration = eventData.data.attempt;
+                                }
+
+                                // Handle final event
+                                if (eventData.event === 'final') {
+                                    aiMessage.loading = false;
+                                    aiMessage.answer = eventData.data.answer;
+                                    aiMessage.sources = eventData.data.sources || [];
+                                    isLoading.value = false;
+                                    currentJobId.value = null;
+                                    eventSource.value.close();
+                                    eventSource.value = null;
+                                }
+
+                                scrollToBottom();
+                            } catch (err) {
+                                console.error('Error parsing event:', err);
+                            }
+                        };
+
+                        eventSource.value.onerror = (e) => {
+                            console.error('EventSource error:', e);
+                            aiMessage.loading = false;
+                            aiMessage.answer = 'An error occurred while processing your request.';
+                            isLoading.value = false;
+                            currentJobId.value = null;
+                            if (eventSource.value) {
+                                eventSource.value.close();
+                                eventSource.value = null;
+                            }
+                        };
+
+                    } catch (error) {
+                        console.error('Error starting job:', error);
+                        aiMessage.loading = false;
+                        aiMessage.answer = 'Failed to start the query. Please try again.';
+                        isLoading.value = false;
+                        currentJobId.value = null;
+                    }
+                };
+
+                const cancelJob = async () => {
+                    if (currentJobId.value) {
+                        try {
+                            await fetch(`/rag/jobs/${currentJobId.value}/cancel`, { method: 'POST' });
+
+                            // Update current loading message
+                            const loadingMessage = messages.value.find(m => m.loading);
+                            if (loadingMessage) {
+                                loadingMessage.loading = false;
+                                loadingMessage.answer = 'Query was cancelled.';
+                            }
+
+                            isLoading.value = false;
+                            currentJobId.value = null;
+
+                            if (eventSource.value) {
+                                eventSource.value.close();
+                                eventSource.value = null;
+                            }
+                        } catch (error) {
+                            console.error('Error cancelling job:', error);
+                        }
+                    }
+                };
+
+                return {
+                    messages,
+                    currentQuery,
+                    isLoading,
+                    currentJobId,
+                    chatContainer,
+                    submitQuery,
+                    cancelJob,
+                    formatTime,
+                    formatBoldText
+                };
+            }
+        }).mount('#app');
+    </script>
 </body>
 </html>
