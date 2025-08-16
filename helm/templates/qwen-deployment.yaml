@@ -18,7 +18,7 @@ spec:
     spec:
       containers:
         - name: qwen
-          image: vllm/vllm-openai:latest   # <- Keep GPU image
+          image: vllm/vllm-openai:latest
           command: [ "python3", "-m", "vllm.entrypoints.openai.api_server" ]
           args:
             - "--model"
@@ -47,3 +47,25 @@ spec:
           ports:
             - containerPort: 8000
               name: http
+          startupProbe:
+            httpGet:
+              path: /v1/models
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 40
+          livenessProbe:
+            httpGet:
+              path: /v1/models
+              port: 8000
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /v1/models
+              port: 8000
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 2

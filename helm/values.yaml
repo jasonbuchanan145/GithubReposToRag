@@ -70,7 +70,7 @@ cassandra:
   initDBConfigMap: null
 
 qwen:
-  model: "Qwen/Qwen3-4B-FP8"
+  model: "Qwen/Qwen2.5-3B-Instruct"
   gpu: true
   # Increase GPU memory utilization to fit larger KV cache
   gpuMemoryUtilization: 0.85
@@ -88,17 +88,40 @@ ragapi:
   image: rag-api:latest
   imagePullPolicy: IfNotPresent
 
+env:
+  QWEN_ENDPOINT: "http://qwen:8000"
+  CASSANDRA_HOST: "rag-demo-cassandra"
+  CASSANDRA_PORT: "9042"
+  CASSANDRA_USERNAME: cassandra
+  CASSANDRA_PASSWORD: cassandra
+  CASSANDRA_KEYSPACE: vector_store
+  REDIS_URL: "redis://:changeme@rag-demo-redis-master:6379/0"
+  MAX_RAG_ATTEMPTS: "3"
+  MIN_SOURCE_NODES: "1"
+
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: true
+    password: changeme
+  master:
+    persistence:
+      enabled: false  # fine for learning
+
+worker:
+  enabled: true
+  replicas: 1
+  command: ["arq", "app.worker.WorkerSettings"]
+
+
 # Shared data volume for repository data and summaries
 sharedData:
   # Enable persistent volume for repo data
   enabled: true
-  # Path on host machine to mount the volume
   hostPath: "/tmp/rag-demo-data"
-  # Size of the persistent volume
   size: 10Gi
-  # Path inside containers where volume is mounted
   mountPath: "/data"
-  # Storage class for the persistent volume
   storageClass: "standard"
 
 # This is for the secretes for pulling an image from a private repository more information can be found here: https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/

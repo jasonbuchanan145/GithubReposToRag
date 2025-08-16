@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rag-worker
+  labels:
+    app: rag-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: rag-worker }
+  template:
+    metadata:
+      labels: { app: rag-worker }
+    spec:
+      initContainers:
+        - name: wait-for-redis
+          image: busybox:1.36
+          command: ["sh","-c"]
+          args:
+            - |
+              echo "⏳ waiting for Redis ..."
+              for i in $(seq 1 30); do
+                if nc -z -w 5 redis-master 6379; then
+                  echo "✅ Redis is reachable"
+                  exit 0
+                fi
+                echo "retry $i/30"
+                sleep 5
+              done
+              exit 1
+        - name: wait-for-qwen
+          image: busybox:1.36
+          command: ["sh","-c"]
+          args:
+            - |
+              echo "⏳ waiting for Qwen ..."
+              for i in $(seq 1 30); do
+                if nc -z -w 5 qwen 8000; then
+                  echo "✅ Qwen is reachable"
+                  exit 0
+                fi
+                echo "retry $i/30"
+                sleep 5
+              done
+              exit 1
+        - name: wait-for-cassandra
+          image: busybox:1.36
+          command: ["sh","-c"]
+          args:
+            - |
+              echo "⏳ waiting for Cassandra ..."
+              for i in $(seq 1 30); do
+                if nc -z -w 5 {{ printf "%s-cassandra" .Release.Name }} 9042; then
+                  echo "✅ Cassandra is reachable"
+                  exit 0
+                fi
+                echo "retry $i/30"
+                sleep 5
+              done
+              exit 1
+      containers:
+        - name: rag-worker
+          image: rag-worker:latest
+          command: ["conda","run","--no-capture-output","-n","worker","python","-m","arq","worker.worker.WorkerSettings"]
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: REDIS_URL
+              value: "redis://:changeme@redis-master:6379/0"
+            - name: QWEN_ENDPOINT
+              value: "http://qwen:8000"
+            - name: CASSANDRA_HOST
+              value: "{{ .Release.Name }}-cassandra"
+            - name: CASSANDRA_PORT
+              value: "9042"
+            - name: CASSANDRA_USERNAME
+              value: "{{ .Values.cassandra.auth.username }}"
+            - name: CASSANDRA_PASSWORD
+              value: "{{ .Values.cassandra.auth.password }}"
+            - name: CASSANDRA_KEYSPACE
+              value: "vector_store"
+            - name: MAX_RAG_ATTEMPTS
+              value: "3"
+            - name: MIN_SOURCE_NODES
+              value: "1"
+          # simple liveness: arq will exit non-zero if it crashes; kube restarts
+          livenessProbe:
+            exec:
+              command: ["sh","-c","pgrep -f 'python -m arq .*WorkerSettings' >/dev/null"]
+            initialDelaySeconds: 20
+            periodSeconds: 30
