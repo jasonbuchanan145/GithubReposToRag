@@ -61,7 +61,7 @@ spec:
       containers:
         - name: rag-worker
           image: rag-worker:latest
-          command: ["conda","run","--no-capture-output","-n","worker","python","-m","arq","worker.WorkerSettings"]
+          command: ["conda","run","--no-capture-output","-n","worker","python","-m","arq","worker.worker.WorkerSettings"]
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
             - name: REDIS_URL

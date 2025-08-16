@@ -28,7 +28,7 @@ EMBED_DIM = int(os.getenv("EMBED_DIM", "384"))
 
 # LLM (Qwen via vLLM/OpenAI API compat)
 QWEN_ENDPOINT = os.getenv("QWEN_ENDPOINT", "http://qwen:8000")
-QWEN_MODEL = os.getenv("QWEN_MODEL", "Qwen/Qwen3-4B-FP8")
+QWEN_MODEL = os.getenv("QWEN_MODEL", "Qwen/Qwen2.5-3B-Instruct")
 QWEN_MAX_OUTPUT = int(os.getenv("QWEN_MAX_OUTPUT", "1024"))
 QWEN_TEMPERATURE = float(os.getenv("QWEN_TEMPERATURE", "0.7"))
 QWEN_TOP_P = float(os.getenv("QWEN_TOP_P", "0.9"))

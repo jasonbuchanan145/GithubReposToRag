@@ -1,16 +1,33 @@
 import asyncio
 import logging
+import sys
 from typing import Any, Dict, List, Optional
 
-from llama_index.core.response.schema import Response
+from arq import create_pool
+from arq.connections import RedisSettings
+from llama_index.core.base.response.schema import Response
 from rag_shared.bus import ProgressBus, CancelFlags
 from rag_shared.config import (
     REDIS_URL, MAX_RAG_ATTEMPTS, MIN_SOURCE_NODES
 )
 from worker.services.rag_engine import RAGEngine
 
+# Configure root logging to show all messages
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+
+# Also ensure our specific logger is set up
 logger = logging.getLogger("rag_worker")
 logger.setLevel(logging.INFO)
+
+# Set logging level for all relevant loggers
+logging.getLogger("worker").setLevel(logging.INFO)
+logging.getLogger("rag_shared").setLevel(logging.INFO)
 
 bus = ProgressBus(REDIS_URL)
 flags = CancelFlags(REDIS_URL)
@@ -38,7 +55,6 @@ def _should_retry(sources_count: int, attempt: int, forced: Optional[str]) -> bo
         return False
     return sources_count < MIN_SOURCE_NODES
 
-# ---- main job function (called by arq worker) ------------------------
 
 async def run_rag_job(ctx, job_id: str, req: Dict[str, Any]) -> None:
     """
@@ -104,7 +120,18 @@ async def run_rag_job(ctx, job_id: str, req: Dict[str, Any]) -> None:
         await bus.emit(job_id, "error", {"message": str(e)})
         await bus.emit(job_id, "final", {"answer": "", "sources": None, "error": True})
 
-# ---- arq settings ----------------------------------------------------
 
 class WorkerSettings:
+    """
+    ARQ Worker Settings configuration.
+    """
+    # Use Redis URL from environment (set by Kubernetes deployment)
+    redis_settings = RedisSettings.from_dsn(REDIS_URL)
+
+    # List of functions that this worker can execute
     functions = [run_rag_job]
+
+    # Optional: Worker configuration
+    max_jobs = 10
+    job_timeout = 300  # 5 minutes
+    keep_result = 3600  # Keep results for 1 hour

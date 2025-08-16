@@ -2,9 +2,9 @@
 from typing import Dict, Optional
 
 from llama_index.core import Settings
-from llama_index.core.response.schema import Response
+from llama_index.core.base.response.schema import Response
 
-from worker.services.router_service import RouterService  # your existing per-level indices
+from worker.services.router_service import RouterService
 
 
 class RAGEngine:

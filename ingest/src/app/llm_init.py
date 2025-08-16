@@ -10,7 +10,7 @@ from llama_index.core.llms.callbacks import llm_completion_callback
 from llama_index.core.llms import CustomLLM, CompletionResponse, LLMMetadata
 import requests
 from llama_index.core import Settings
-
+from rag_shared.config import QWEN_MODEL
 
 from app import config
 
@@ -53,7 +53,7 @@ def _sanitize(text: str) -> str:
 class QwenLLM(CustomLLM):
     """Custom LLM implementation for Qwen model in ingest service (soft suppression)."""
 
-    model_name: str = os.getenv("QWEN_MODEL", "Qwen/Qwen3-4B-FP8")
+    model_name: QWEN_MODEL
     context_window: int = 11712
     num_output: int = 1024
 
@@ -121,9 +121,8 @@ class QwenLLM(CustomLLM):
             payload["chat_template_kwargs"] = {"enable_thinking": False}
 
         headers = {"Content-Type": "application/json"}
-        logging.debug(f"POST {url}")
-        if LOG_RAW:
-            logging.debug("➡️ Payload: %s", json.dumps(payload)[:2000])
+        logging.info(f"POST {url}")
+        logging.info("➡️ Payload: %s", json.dumps(payload)[:2000])
 
         r = requests.post(url, json=payload, headers=headers, timeout=60)
         if r.status_code != 200:
@@ -146,8 +145,8 @@ class QwenLLM(CustomLLM):
         return _sanitize(content) or "No response generated"
 
     def _call_qwen_completion_api(self, prompt: str, **kwargs) -> str:
-        """Fallback: classic /v1/completions (no chat_template control)."""
-        url = f"{self._base_url()}/v1/completions"
+        """Fallback: classic /v1/chat/completions (no chat_template control)."""
+        url = f"{self._base_url()}/v1/chat/completions"
         payload = {
             "model": self.model_name,
             "prompt": self._maybe_inject_instruction(prompt),
@@ -178,7 +177,7 @@ class QwenLLM(CustomLLM):
 
         return _sanitize(text) or "No response generated"
 
-    # When using /v1/completions, we can still bias the model away from prefaces:
+    # When using /v1/chat/completions, we can still bias the model away from prefaces:
     def _maybe_inject_instruction(self, prompt: str) -> str:
         if not FINAL_ONLY_INSTRUCTION:
             return prompt

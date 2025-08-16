@@ -8,10 +8,9 @@ from llama_index.core.query_engine import RouterQueryEngine, RetrieverQueryEngin
 from llama_index.core.tools import QueryEngineTool, ToolMetadata
 from llama_index.core.selectors import LLMSingleSelector
 from llama_index.core.base.base_query_engine import BaseQueryEngine
-from llama_index.core.response.schema import Response   # <-- keep only this Response
-
+from llama_index.core.base.response.schema import Response
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-
+from llama_index.core.callbacks import CallbackManager
 from rag_shared.config import (
     ROUTER_TOP_K,
     EMBED_MODEL,
@@ -26,19 +25,47 @@ logger = logging.getLogger(__name__)
 class DirectLLMQueryEngine(BaseQueryEngine):
     """A minimal query engine that just uses the LLM without any retrieval."""
 
-    def query(self, query_str: str, **kwargs: Any) -> Response:
-        text = Settings.llm.complete(query_str).text
-        return Response(text=text)
+    def __init__(self, callback_manager=None):
+        """Initialize the DirectLLMQueryEngine with optional callback manager."""
+        if callback_manager is None:
+            callback_manager = Settings.callback_manager
+        super().__init__(callback_manager=callback_manager)
 
-    async def aquery(self, query_str: str, **kwargs: Any) -> Response:
+    def _get_prompt_modules(self) -> Dict[str, Any]:
+        """Return prompt modules used by this query engine."""
+        return {}
+
+    def _query(self, query_bundle) -> Response:
+        """Internal query method required by BaseQueryEngine."""
+        query_str = str(query_bundle.query_str) if hasattr(query_bundle, 'query_str') else str(query_bundle)
+        text = Settings.llm.complete(query_str).text
+        return Response(text)
+
+    async def _aquery(self, query_bundle) -> Response:
+        """Internal async query method required by BaseQueryEngine."""
+        query_str = str(query_bundle.query_str) if hasattr(query_bundle, 'query_str') else str(query_bundle)
         if hasattr(Settings.llm, "acomplete"):
             text = (await Settings.llm.acomplete(query_str)).text
         else:
             import asyncio
             loop = asyncio.get_event_loop()
             text = await loop.run_in_executor(None, lambda: Settings.llm.complete(query_str).text)
-        return Response(text=text)
+        return Response(text)
 
+    def query(self, query_str: str, **kwargs: Any) -> Response:
+        # Keep the existing public interface
+        text = Settings.llm.complete(query_str).text
+        return Response(text)
+
+    async def aquery(self, query_str: str, **kwargs: Any) -> Response:
+        # Keep the existing public interface
+        if hasattr(Settings.llm, "acomplete"):
+            text = (await Settings.llm.acomplete(query_str)).text
+        else:
+            import asyncio
+            loop = asyncio.get_event_loop()
+            text = await loop.run_in_executor(None, lambda: Settings.llm.complete(query_str).text)
+        return Response(text)
 
 class RouterService:
     def __init__(self):
