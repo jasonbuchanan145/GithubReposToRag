@@ -2,6 +2,29 @@
 # Stop on any non-handled error and enable strict mode
 $ErrorActionPreference = 'Stop'
 
+# Parse command line parameters
+param(
+    [string]$GithubUser
+)
+
+# Handle GitHub user parameter
+if (-not $GithubUser) {
+    Write-Host ""
+    Write-Host "GitHub User Configuration" -ForegroundColor Cyan
+    Write-Host "Please specify the GitHub user whose repositories you want to ingest." -ForegroundColor White
+    Write-Host "This can be your own username or any other GitHub user with public repositories." -ForegroundColor White
+    Write-Host ""
+
+    do {
+        $GithubUser = Read-Host -Prompt "Enter GitHub username"
+        if ([string]::IsNullOrWhiteSpace($GithubUser)) {
+            Write-Host "Username cannot be empty. Please try again." -ForegroundColor Red
+        }
+    } while ([string]::IsNullOrWhiteSpace($GithubUser))
+}
+
+Write-Host "Using GitHub user: $GithubUser" -ForegroundColor Green
+
 minikube start `
   --driver=docker `
   --container-runtime=docker --gpus=all --cpus=8 --memory=16g `
@@ -18,17 +41,8 @@ Start-Job { minikube tunnel }
 # Re-eval docker-env as suggested by minikube
 (minikube -p minikube docker-env) | Invoke-Expression
 
-# Fix file permissions before Docker build
-Write-Host "Fixing file permissions..."
-Get-ChildItem -Path "." -Recurse -File | ForEach-Object {
-  if ($_.Extension -eq ".sh" -or $_.Extension -eq ".py") {
-    # PowerShell doesn't have chmod, but we can try icacls for Windows
-    # The Docker build issue might be related to Windows file attributes
-    $_.Attributes = $_.Attributes -band (-bnot [System.IO.FileAttributes]::ReadOnly)
-  }
-}
 
-# Build images with better error handling
+
 Write-Host "Building and loading Docker images into Minikube..." -ForegroundColor Yellow
 try {
   # Switch to minikube's Docker environment
@@ -45,12 +59,10 @@ try {
   docker build -t localhost:5000/rag-api:latest -f rest_api/Dockerfile .
   docker tag localhost:5000/rag-api:latest rag-api:latest
 
-  # Try to build frontend with a smaller context
-  # Write-Host "Building rag-frontend..." -ForegroundColor Green
-  # Push-Location frontend/nextjs-app
-  # docker build -t localhost:5000/rag-frontend:latest -f Dockerfile .
-  # docker tag localhost:5000/rag-frontend:latest rag-frontend:latest
-  # Pop-Location
+  Write-Host "Building rag-worker..." -ForegroundColor Green
+  Push-Location frontend/nextjs-app
+  docker build -t localhost:5000/rag-frontend:latest -f Dockerfile .
+  docker tag localhost:5000/rag-frontend:latest rag-frontend:latest
 
   Write-Host "All Docker images built successfully and loaded into Minikube!" -ForegroundColor Green
 } catch {
@@ -180,16 +192,16 @@ if (-not $secretExists) {
     $plainToken = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($githubToken))
 
     if ([string]::IsNullOrWhiteSpace($plainToken)) {
-      Write-Host "❌ Token cannot be empty. Please try again." -ForegroundColor Red
+      Write-Host "Token cannot be empty. Please try again." -ForegroundColor Red
     } elseif ($plainToken.Length -lt 20) {
-      Write-Host "❌ Token seems too short. GitHub tokens are typically 40+ characters. Please try again." -ForegroundColor Red
+      Write-Host "Token seems too short. GitHub tokens are typically 40+ characters. Please try again." -ForegroundColor Red
     }
   } while ([string]::IsNullOrWhiteSpace($plainToken) -or $plainToken.Length -lt 20)
 
   Write-Host "Creating GitHub token secret..." -ForegroundColor Green
   try {
     kubectl -n rag create secret generic github-token --from-literal=token=$plainToken
-    Write-Host "✅ GitHub token secret created successfully!" -ForegroundColor Green
+    Write-Host "GitHub token secret created successfully!" -ForegroundColor Green
 
     # Clear the token from memory for security
     $plainToken = $null
@@ -214,15 +226,17 @@ $disablePersistence = $false # Set to $true to disable persistence for quick tes
 
 try {
   if ($disablePersistence) {
-    Write-Host "⚠️ Running WITHOUT persistence - data will be lost when pods are deleted" -ForegroundColor Yellow
+    Write-Host "Running WITHOUT persistence - data will be lost when pods are deleted" -ForegroundColor Yellow
     helm install rag-demo ./helm -n rag `
           --set image.tag=dev `
           --set image.pullPolicy=IfNotPresent `
-          --set cassandra.persistence.enabled=false
+          --set cassandra.persistence.enabled=false `
+          --set github.user=$GithubUser
   } else {
     helm install rag-demo ./helm -n rag `
           --set image.tag=dev `
-          --set image.pullPolicy=IfNotPresent
+          --set image.pullPolicy=IfNotPresent `
+          --set github.user=$GithubUser
   }
   Write-Host "Helm chart installed successfully!" -ForegroundColor Green
 } catch {
@@ -336,12 +350,5 @@ if (-not $ready) {
 
 # Port-forward in background
 Write-Host "Starting port forwarding..."
-Start-Job { kubectl -n rag port-forward svc/rag-api      8000:8000 }
-Start-Job { kubectl -n rag port-forward svc/rag-frontend 3000:80   }
-Start-Job { kubectl -n rag port-forward svc/rag-demo-cassandra 9042:9042 }
 
-Write-Host "Deployment completed!" -ForegroundColor Green
-Write-Host "Services should be available at:" -ForegroundColor Yellow
-Write-Host "- API: http://localhost:8000" -ForegroundColor Yellow
-Write-Host "- Frontend: http://localhost:3000" -ForegroundColor Yellow
-Write-Host "- Cassandra: localhost:9042" -ForegroundColor Yellow
+Write-Host "Deployment completed! In order to access from your host machine please run `minikube services --all -n rag" -ForegroundColor Green

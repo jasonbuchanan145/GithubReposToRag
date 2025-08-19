@@ -1,6 +1,9 @@
 # CodeRAG: Intelligent Code Repository Assistant
 
-A specialized RAG (Retrieval Augmented Generation) system for intelligent code repository analysis and assistance. CodeRAG ingests repositories, builds vectorized knowledge bases, and provides contextual AI responses about repository structure, functionality, and implementation details.
+A specialized RAG (Retrieval Augmented Generation) system for intelligent code repository analysis and assistance. CodeRAG ingests repositories, 
+builds vectorized knowledge bases, and provides contextual AI responses about repository structure, functionality, and implementation details.
+
+This project is intended in the first part of the arrange phase of LLM execution 
 
 ## 🌟 Features
 
@@ -78,7 +81,6 @@ flowchart LR
     LEGEND[Dashed arrows indicate optional refinement loop with limited iterations]:::note
 ```
 ### Workflow level diagram
-
 ```mermaid
 graph TD
 
@@ -89,6 +91,7 @@ graph TD
     classDef pipe fill:#2f855a,stroke:#22543d,color:#ffffff
     classDef note fill:#4a5568,stroke:#2d3748,color:#e2e8f0
     classDef infra fill:#22543d,stroke:#1b3a2a,color:#e2e8f0
+    classDef control fill:#805ad5,stroke:#553c9a,color:#ffffff
 
 %% ===========================
 %% Ingestion Pipeline
@@ -136,86 +139,114 @@ graph TD
     end
 
 %% ===========================
-%% Query Pipeline
+%% Query Pipeline with Iterative Refinement
 %% ===========================
 subgraph Query_Pipeline
 direction TB
 
-U[User Query]:::pipe -->|HTTP REST| API[REST API · FastAPI<br/>app/main.py]:::svc
+U[User Query]:::pipe -->|HTTP REST| API[REST API - FastAPI<br/>app/main.py]:::svc
 
 %% --- API Layer & Endpoints ---
 subgraph REST_API_Service
 direction TB
 JR[JobsController<br/>app/controllers/jobs_controller.py]:::svc
 JR -->|POST /rag/jobs<br/>enqueue| ENQ[enqueue_job<br/>name: run_rag_job<br/>args: job_id, QueryRequest]:::pipe
-JR -->|GET /rag/jobs/:job_id/events<br/>SSE| SSE[SSE Stream → client]:::pipe
+JR -->|GET /rag/jobs/:job_id/events<br/>SSE| SSE[SSE Stream -> client]:::pipe
 JR -->|POST /rag/jobs/:job_id/cancel| CXL[set CancelFlags]:::pipe
 end
 API --> JR
 
 %% --- Redis as queue + event bus ---
-RQ[Redis<br/>ARQ queue · ProgressBus · CancelFlags]:::infra
-
+RQ[Redis<br/>ARQ queue / ProgressBus / CancelFlags]:::infra
 ENQ -->|job payload<br/>query, force_level?, top_k?, repo_name?| RQ
 CXL -->|cancel signal| RQ
 RQ -->|SSE chunks<br/>bus.stream| SSE
 SSE --> U
 
-%% --- Worker Side ---
+%% --- Worker Side Orchestrator ---
 subgraph RAG_Worker_Service
 direction TB
 W[ARQ Worker<br/>worker/worker.py::run_rag_job]:::svc
 ENG[RAGEngine<br/>worker/services/rag_engine.py]:::svc
 ROUTER[RouterService<br/>worker/services/router_service.py]:::svc
 
-W -->|attempt loop<br/>retry until MIN_SOURCE_NODES or limit| ENG
-ENG -->|route: query, force_level| ROUTER
+%% Refinement Controller inside RAGEngine
+subgraph REFINER[Refinement Controller]
+direction TB
+POL[Refinement Policy<br/>max_iterations = 3<br/>no quality threshold<br/>fixed retrieval params]:::control
+PROMPT[Prompt Builder<br/>system  context  tools  style]:::control
+CRIT[Self-Critique / Scorer<br/>LLM-as-judge - Qwen]:::control
+ITER{more iterations remaining?}:::control
+end
 end
 
 RQ -->|dequeue run_rag_job| W
-W -->|emit progress · tokens<br/>ProgressBus.emit: job_id, ...| RQ
+W -->|attempt loop<br/>retry until MIN_SOURCE_NODES or limit| ENG
+ENG -->|route: query, force_level| ROUTER
+W -->|emit progress and tokens<br/>ProgressBus.emit: job_id, ...| RQ
 
 %% --- Routed Tools / Retrieval ---
 subgraph RAG_Tools
 direction TB
-NR[Direct LLM · no_rag<br/>DummyQueryEngine]:::pipe
+NR[Direct LLM - no_rag<br/>DummyQueryEngine]:::pipe
 CODE[Code Retriever]:::pipe
 PKG[Package Retriever]:::pipe
 PROJ[Project Retriever]:::pipe
 
 CODE --> CR[VectorIndexRetriever<br/>top_k = ROUTER_TOP_K]:::pipe
-CR --> CIDX[VectorStoreIndex<br/>· CODE_TABLE]:::pipe
+CR --> CIDX[VectorStoreIndex<br/>CODE_TABLE]:::pipe
 
 PKG --> PR[VectorIndexRetriever<br/>top_k = ROUTER_TOP_K]:::pipe
-PR --> PIDX[VectorStoreIndex<br/>· PACKAGE_TABLE]:::pipe
+PR --> PIDX[VectorStoreIndex<br/>PACKAGE_TABLE]:::pipe
 
-PROJ --> JR[VectorIndexRetriever<br/>top_k = ROUTER_TOP_K]:::pipe
-JR --> JIDX[VectorStoreIndex<br/>· PROJECT_TABLE]:::pipe
+PROJ --> VRP[VectorIndexRetriever<br/>top_k = ROUTER_TOP_K]:::pipe
+VRP --> JIDX[VectorStoreIndex<br/>PROJECT_TABLE]:::pipe
 
-NR --> A1[Answer]:::pipe
+%% Synthesizers and Answers
+NR --> A0[Draft Answer v0]:::pipe
 CODE --> S1[TreeSummarize Synthesizer]:::pipe
 PKG --> S2[TreeSummarize Synthesizer]:::pipe
 PROJ --> S3[TreeSummarize Synthesizer]:::pipe
-S1 --> A2[Answer with sources]:::pipe
-S2 --> A3[Answer with sources]:::pipe
-S3 --> A4[Answer with sources]:::pipe
+S1 --> A1[Draft Answer v1]:::pipe
+S2 --> A2[Draft Answer v1]:::pipe
+S3 --> A3[Draft Answer v1]:::pipe
 end
 
-ROUTER -->|LLM routing: no_rag · code · package · project| NR
+ROUTER -->|LLM routing: no_rag / code / package / project| NR
 ROUTER --> CODE
 ROUTER --> PKG
 ROUTER --> PROJ
 
+%% Allow route change during refinement
+CRIT -. may re-route based on critique .-> ROUTER
+
+%% ===========================
+%% Iterative Reprompting Loop (3 fixed iterations or cancel)
+%% ===========================
+A0 -->|evaluate| CRIT
+A1 -->|evaluate| CRIT
+A2 -->|evaluate| CRIT
+A3 -->|evaluate| CRIT
+
+CRIT -->|score and feedback| POL
+POL -->|refine plan| PROMPT
+PROMPT -->|assemble messages + context| CALL[(Call Qwen LLM)]:::llm
+CALL --> RESP[Model Response - answer and citations]:::llm
+RESP -->|append to working draft| DRAFT[Refined Answer v_k]:::pipe
+DRAFT --> CRIT
+CRIT --> ITER
+ITER -- Yes --> PROMPT
+ITER -- No --> FINAL[Final Answer + sources]:::pipe
+
 %% Worker returns answers as streamed events
-A1 --> W
-A2 --> W
-A3 --> W
-A4 --> W
+DRAFT --> W
+FINAL --> W
+W -->|stream tokens, progress, drafts, final| RQ
 
 end
 
 %% ===========================
-%% Core Services
+%% Core Services (reference)
 %% ===========================
 subgraph Core_Services
 direction TB
@@ -251,6 +282,7 @@ S1 --- LLM_BUS
 S2 --- LLM_BUS
 S3 --- LLM_BUS
 M1 --- LLM_BUS
+CALL --- QWEN
 
 %% Cassandra usage
 CIDX --- V_CODE
@@ -260,6 +292,11 @@ F --- CASS_BUS
 
 %% External client
 WEB[Web UI or Client]:::pipe -->|HTTP rag| API
+
+%% ====== Legend & Notes ======
+LEG1[Legend<br/>Iterative loop: Build -> LLM -> Judge -> Decide<br/>Stop conditions: iteration count = 3 or cancel]:::note
+LEG2[Events<br/>- ProgressBus emits: phase, score, tokens_used, iteration k<br/>- SSE streams: partial tokens, draft updates, final answer<br/>- Intermediate drafts/scores are streamed only not persisted]:::note
+
 ```
 ## 🚀 Getting Started
 
@@ -293,24 +330,6 @@ Start script currently only available for windows.
 
 ### Ingesting a Repository
 
-You can ingest a repository by using the CLI tool or the API:
-
-```shell
-# Using the CLI
-kubectl -n rag exec -it deployment/rag-ingest -- python /app/llama_ingest.py --repo username/repository
-
-# Using the API
-curl -X POST http://localhost:8000/ingest -H "Content-Type: application/json" \
-  -d '{"repo_url": "https://github.com/username/repository"}'
-```
-
-### Querying the System
-
-```shell
-# API example
-curl -X POST http://localhost:8000/rag -H "Content-Type: application/json" \
-  -d '{"query": "Explain the authentication flow in this repository"}'
-```
 
 ## 🧠 Intelligent Query Handling
 
@@ -357,17 +376,35 @@ docker build -t rag-frontend:latest .
 
 ## 📦 Technologies
 
-- **LlamaIndex**: Core RAG functionality
-- **Sentence Transformers**: Text embeddings
-- **vLLM**: Optimized LLM inference
-- **Cassandra**: Vector database
-- **FastAPI**: REST API
-- **Kubernetes**: Deployment and orchestration
+- **LlamaIndex**: Core RAG functionality and document processing
+- **Sentence Transformers**: E5-small-v2 embeddings (384 dimensions)
+- **vLLM + Qwen**: High-performance LLM inference with Qwen2.5-3B-Instruct
+- **Cassandra**: Distributed vector database for embeddings storage
+- **Redis**: Job queue (ARQ) and event streaming infrastructure
+- **FastAPI**: REST API with Server-Sent Events (SSE) support
+- **Kubernetes + Helm**: Container orchestration and deployment
+- **Docker**: Containerization and image management
 
 ## 🤝 Contributing
 
-Contributions are welcome, although this project is still in the non-functional MVP build out stage scheduled to be completed by August 15 2025.
+Contributions are welcome! This project is currently in active development with the core MVP functionality being implemented. 
+
+### Development Guidelines
+
+- Follow the existing project structure and naming conventions
+- Test changes with the provided Minikube environment
+- Update documentation for any new features or architectural changes
+- Ensure Docker images build successfully with the provided Dockerfiles
+
+### Current Development Status
+
+The system includes:
+- ✅ Repository ingestion pipeline with GitHub integration
+- ✅ Multi-level vector storage (code, package, project)
+- ✅ Intelligent query routing and iterative refinement
+- ✅ Kubernetes deployment with Helm charts
+- ✅ Real-time job processing with progress streaming
 
 ## 📄 License
 
-This project is licensed under the Apache License - see the LICENSE file for details.
+This project is licensed under the Apache License 2.0 - see the LICENSE file for details.
