@@ -298,112 +298,245 @@ LEG1[Legend<br/>Iterative loop: Build -> LLM -> Judge -> Decide<br/>Stop conditi
 LEG2[Events<br/>- ProgressBus emits: phase, score, tokens_used, iteration k<br/>- SSE streams: partial tokens, draft updates, final answer<br/>- Intermediate drafts/scores are streamed only not persisted]:::note
 
 ```
-## 🚀 Getting Started
+# 🚀 Getting Started
 
-### Prerequisites
+This section walks you through standing up CodeRAG locally with **Windows + PowerShell** as the primary path. 
+Linux may work, but it hasn’t been tested.
 
-- Minikube or Kubernetes cluster
-- Docker
-- Helm
-- GitHub API token (for repository access)
+> **GPU is required.** CPU fallback is **not** supported due to the vLLM container constraints. You’ll need an NVIDIA GPU with **≥ 8 GB** VRAM and CUDA drivers installed.
 
-### Setup
+## Prerequisites
 
-1. **Start the local environment:**
-Start script currently only available for windows. 
-```shell
-   .\start.ps1
-```
+* **OS**: Windows 10/11 (PowerShell 7+). *Linux/macOS may work but are untested.*
+* **Hardware**: >= 4 CPU cores (8 recommended), >= 16 GB RAM, **NVIDIA GPU (≥ 8 GB VRAM)** with CUDA drivers
+* **Software**: Docker Desktop, Minikube, kubectl, Helm, Git
+* **GitHub**: Fine‑grained **Personal Access Token (PAT)** with **read‑only** scope (to avoid low unauthenticated rate limits)
 
-2. **Create GitHub token secret:**
+## One‑time setup
 
-   ```shell
-   kubectl -n rag create secret generic github-token \
-     --from-literal=token=your_github_token_here
+1. **Install prerequisites**
+
+    * Install Docker Desktop and enable Kubernetes/WSL2 integration if prompted
+    * Install Minikube, kubectl, and Helm from their official sites
+    * Ensure your GPU drivers and CUDA are installed and recognized by Docker (e.g., `docker run --gpus all nvidia/cuda:12.1.0-base nvidia-smi`)
+
+2. **Create a GitHub fine‑grained token (read‑only)**
+
+    * Go to GitHub → *Settings* → *Developer settings* → *Fine‑grained tokens*
+    * Scope: **Read‑only** for public repositories is sufficient for quickstarts
+    * Keep the token ready—you’ll be prompted for it during setup (recommended; unauthenticated 60/hr is too low)
+
+3. **Clone this repo**
+
+   ```powershell
+   git clone https://github.com/jasonbuchanan145/GithubReposToRag.git
+   cd GithubReposToRag
    ```
 
-3. **Access the web interface:**
-   - Frontend: http://localhost:3000
-   - API: http://localhost:8000
+---
 
-## 📝 Usage
+## Start the local environment
 
-### Ingesting a Repository
+The project provides a script that prepares Minikube, builds all images locally from source, and installs the Helm chart.
 
+### Run (Windows + PowerShell)
 
-## 🧠 Intelligent Query Handling
+```powershell
+# Option A: prompt for the GitHub user interactively
+./start.ps1
 
-CodeRAG uses sophisticated query classification to provide the most relevant context:
-
-- **High-Level Queries** like "Explain the architecture" or "Give an overview of the auth system" retrieve repository and directory summaries first.
-
-- **Code-Specific Queries** like "How is the login function implemented?" or "What parameters does the API endpoint accept?" focus on retrieving code chunks.
-
-## 🔧 Development
-
-### Environment Setup
-
-The project uses two Conda environments:
-
-1. **Ingest Environment** (environment-scripts.yml): 
-   - Used for repository ingestion and processing
-   - Includes notebook processing tools and GitHub integration
-
-2. **Service Environment** (environment-service.yml):
-   - Used for the API service
-   - Optimized for query processing and response generation
-
-### Building From Source
-
-```shell
-# Build ingest container
-docker build -t rag-ingest:latest -f scripts/Dockerfile .
-
-# Build API container
-docker build -t rag-api:latest -f services/rag_api/Dockerfile .
-
-# Build frontend
-cd frontend/nextjs-app
-docker build -t rag-frontend:latest .
+# Option B: pass the GitHub user up front
+./start.ps1 -GithubUser "jasonbuchanan145"
 ```
 
-## 📚 Project Structure
+What the script does (high level):
 
-- `/scripts` - Repository ingestion tools
-- `/services/rag_api` - REST API for querying the system
-- `/frontend` - Web interface
-- `/helm` - Kubernetes deployment manifests
+* Starts Minikube with GPU support and resources (recommended defaults):
+    * `--gpus=all --cpus=8 --memory=16g` *(minimum: 4 CPUs are OK, but other requirements remain)*
+* Enables addons: `ingress`, `default-storageclass`, `storage-provisioner`, `volumesnapshots`
+* Builds & loads local Docker images into Minikube registry:
 
-## 📦 Technologies
+    * `rag-ingest`, `rag-api`, `rag-frontend`
+* Creates/uses namespace: `rag`
+* Prompts for your **GitHub username** and a **fine‑grained PAT** (read‑only) and stores it in `rag` namespace as secret `github-token`
+* Installs Helm release `rag-demo` with images tagged `dev`
 
-- **LlamaIndex**: Core RAG functionality and document processing
-- **Sentence Transformers**: E5-small-v2 embeddings (384 dimensions)
-- **vLLM + Qwen**: High-performance LLM inference with Qwen2.5-3B-Instruct
-- **Cassandra**: Distributed vector database for embeddings storage
-- **Redis**: Job queue (ARQ) and event streaming infrastructure
-- **FastAPI**: REST API with Server-Sent Events (SSE) support
-- **Kubernetes + Helm**: Container orchestration and deployment
-- **Docker**: Containerization and image management
+    * **Cassandra persistence is enabled by default**
 
-## 🤝 Contributing
+> **Disabling persistence (optional)**: For quick tests you can disable Cassandra persistence by setting the flag in the script (or with Helm values). See the examples below.
 
-Contributions are welcome! This project is currently in active development with the core MVP functionality being implemented. 
+---
 
-### Development Guidelines
+## Accessing the Web UI
 
-- Follow the existing project structure and naming conventions
-- Test changes with the provided Minikube environment
-- Update documentation for any new features or architectural changes
-- Ensure Docker images build successfully with the provided Dockerfiles
+After the deployment completes, expose the API service via Minikube and open the UI:
 
-### Current Development Status
+```powershell
+minikube service rag-api -n rag
+```
 
-The system includes:
-- ✅ Repository ingestion pipeline with GitHub integration
-- ✅ Multi-level vector storage (code, package, project)
-- ✅ Intelligent query routing and iterative refinement
-- ✅ Kubernetes deployment with Helm charts
-- ✅ Real-time job processing with progress streaming
+Click the URL that Minikube prints and navigate to:
+
+```
+/static/index.html
+```
+
+[![UI Screenshot (thumbnail)](images/ui-thumb.png)](images/ui-full.png)
+
+
+---
+
+# Usage
+
+## Ingesting GitHub repositories
+
+The system’s **ingestion job** pulls repositories for the GitHub user you provided and indexes content into Cassandra for retrieval.
+
+**When using the script**
+
+* The Helm chart is installed with `--set github.user=<YourUser>`. This triggers ingestion using the `github-token` secret you provided.
+* For smoke testing, you can set `-GithubUser "jasonbuchanan145"` (public repos available).
+
+**If you need to re‑ingest** (e.g., changed the GitHub user/token):
+
+* Re‑run the script with a different `-GithubUser`
+* Or uninstall the release and reinstall with a new value (see Cleanup below)
+
+> Tip: Keep your token read‑only. The system only needs read access for public repos.
+
+## Querying
+
+You can query via **Web UI** *and* **direct API**.
+
+### 1) Web UI (recommended for first‑time users)
+
+* Open the UI at `/static/index.html` from the `rag-api` Minikube URL
+* Enter a question and select any available options the UI provides
+* Responses stream back with citations where applicable
+
+### 2) Direct API
+
+The API is served by the `rag-api` service. Endpoints of interest:
+
+* **POST** `/rag/jobs` — enqueue a RAG job
+* **GET** `/rag/jobs/{job_id}/events` — Server‑Sent Events (SSE) stream with progress, partial tokens, and final answer
+* **POST** `/rag/jobs/{job_id}/cancel` — request cancellation
+
+**Example: enqueue a query**
+
+```bash
+curl -X POST "<rag-api-base>/rag/jobs" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "query": "Give me an overview of the architecture.",
+        "top_k": 5
+      }'
+```
+
+This returns a `job_id`. Then stream events:
+
+```bash
+curl -N "<rag-api-base>/rag/jobs/<job_id>/events"
+```
+
+> Notes
+>
+> * The system routes between high‑level (project/package) and code‑level retrieval automatically and may iterate a few times before finalizing an answer.
+> * SSE includes progress, partial tokens, and draft updates
+
+---
+
+# ⚙️ Configuration & Helm
+
+The script installs the Helm chart with sensible defaults for local development. Under the hood it runs roughly:
+
+```powershell
+helm install rag-demo ./helm -n rag `
+  --set image.tag=dev `
+  --set image.pullPolicy=IfNotPresent `
+  --set github.user=<YourUser>
+```
+
+**Cassandra persistence** is **enabled by default**. To disable persistence (faster, ephemeral testing), install with:
+
+```powershell
+helm install rag-demo ./helm -n rag `
+  --set image.tag=dev `
+  --set image.pullPolicy=IfNotPresent `
+  --set cassandra.persistence.enabled=false `
+  --set github.user=<YourUser>
+```
+
+> If you modify values directly, ensure the `github-token` secret exists in the `rag` namespace: `kubectl -n rag create secret generic github-token --from-literal=token=<PAT>`
+
+---
+
+# 🧪 Quick smoke test
+
+1. Start with your own GitHub username or use the example user:
+
+   ```powershell
+   ./start.ps1 -GithubUser "jasonbuchanan145"
+   ```
+2. Expose and open the API service, then browse to `/static/index.html`:
+
+   ```powershell
+   minikube service rag-api -n rag
+   ```
+3. Check the status of the ingestion job:
+```powershell
+kubectl get pod -n rag
+```
+then 
+```powershell
+kubectl logs -n rag <ingestion-pod-name>
+```
+---
+
+# Development notes
+
+* **Builds from source.** There are no prebuilt images; the script builds and loads them into Minikube automatically.
+* **Resource tuning.** Minimum: 4 CPU cores; recommended: 8 CPUs / 16GB RAM. **GPU with ≥ 8GB VRAM required.**
+* **Linux/macOS** may work but are **not tested**; equivalent steps would involve running the same Helm chart on a local K8s with GPUs and building images for that cluster.
+
+---
+
+# 🧹 Cleanup
+
+To remove the deployment while leaving Minikube running:
+
+```powershell
+helm uninstall rag-demo -n rag
+kubectl delete namespace rag
+```
+
+To remove the Minikube VM/containers entirely:
+
+```powershell
+minikube delete
+```
+
+---
+
+# 📖 What we intentionally skipped
+
+* **Troubleshooting**: none provided yet. If you hit PVC binding or Cassandra readiness issues, 
+re‑run the script or reinstall with persistence disabled as a quick test.
+
+Please [open an issue](https://github.com/jasonbuchanan145/GithubReposToRag/issues) if you run into any problems.
+
+---
+
+# 📌 Recap of key choices
+
+* **Primary platform**: Windows + PowerShell (Linux untested)
+* **Local environment**: **Minikube only**
+* **Images**: **Built from source** via the script
+* **Cassandra**: Persistence **enabled by default** (example provided to disable)
+* **Access**: Use `minikube service rag-api -n rag` and then open `/static/index.html`
+* **GitHub token**: Fine‑grained, **read‑only**; required for realistic rate limits
+* **Example user**: `jasonbuchanan145`
+* **Resources**: 4 CPUs minimum (8 recommended), 16 GB RAM recommended, **GPU ≥ 8 GB VRAM required**, **no CPU fallback**
 
 ## 📄 License
 
