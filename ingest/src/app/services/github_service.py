@@ -32,7 +32,7 @@ def fetch_repositories(username: str, github_token:str) -> List[str]:
     query = """
     query($login: String!, $after: String) {
       user(login: $login) {
-        repositories(first: 100, after: $after, isFork: false, ownerAffiliations: OWNER) {
+        repositories(first: 100, after: $after, isFork: false, privacy: PUBLIC) {
           pageInfo { endCursor hasNextPage }
           nodes {
             name

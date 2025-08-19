@@ -73,6 +73,11 @@ spec:
                 secretKeyRef:
                   name: github-token
                   key: token
+            - name: GITHUB_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Release.Name }}-github-config
+                  key: GITHUB_USER
             {{- if .Values.sharedData.enabled }}
             - name: DATA_DIR
               value: "{{ .Values.sharedData.mountPath }}"

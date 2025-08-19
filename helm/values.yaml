@@ -88,6 +88,10 @@ ragapi:
   image: rag-api:latest
   imagePullPolicy: IfNotPresent
 
+# GitHub configuration
+github:
+  user: "jasonbuchanan145"  # Default GitHub user - can be overridden
+
 env:
   QWEN_ENDPOINT: "http://qwen:8000"
   CASSANDRA_HOST: "rag-demo-cassandra"
