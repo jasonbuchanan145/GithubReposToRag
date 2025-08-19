@@ -307,10 +307,10 @@ Linux may work, but it hasn’t been tested.
 
 ## Prerequisites
 
-* **OS**: Windows 10/11 (PowerShell 7+). *Linux/macOS may work but are untested.*
+* **OS**: Windows 10/11 (PowerShell 7+). *Linux should work but is untested. OSX will not*
 * **Hardware**: >= 4 CPU cores (8 recommended), >= 16 GB RAM, **NVIDIA GPU (≥ 8 GB VRAM)** with CUDA drivers
-* **Software**: Docker Desktop, Minikube, kubectl, Helm, Git
-* **GitHub**: Fine‑grained **Personal Access Token (PAT)** with **read‑only** scope (to avoid low unauthenticated rate limits)
+* **Software**: Docker Desktop or PodMan, Minikube, kubectl, Helm, Git
+* **GitHub**: Fine‑grained **Personal Access Token (PAT)** with **read‑only** scope (to avoid low unauthenticated rate limits imposed by github)
 
 ## One‑time setup
 
