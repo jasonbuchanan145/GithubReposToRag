@@ -380,6 +380,7 @@ Click the URL that Minikube prints and navigate to:
 ```
 /static/index.html
 ```
+you should be able to ask questions and get answers similar to 
 
 [![UI Screenshot (thumbnail)](images/ui-thumb.png)](images/ui-full.png)
 
