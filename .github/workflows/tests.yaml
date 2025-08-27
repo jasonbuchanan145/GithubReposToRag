@@ -15,14 +15,14 @@ jobs:
             env_file: environment-worker.yaml
             env_name: worker
             path: rag_worker
-          - name: rest_api
-            env_file: environment-rest-api.yaml
-            env_name: rag-api
-            path: rest_api
-          - name: ingest
-            env_file: environment-scripts.yml
-            env_name: rag-demo
-            path: ingest
+        #  - name: rest_api
+        #    env_file: environment-rest-api.yaml
+        #    env_name: rag-api
+        #    path: rest_api
+        #  - name: ingest
+        #    env_file: environment-scripts.yml
+        #    env_name: rag-demo
+        #    path: ingest
 
     steps:
       - uses: actions/checkout@v4

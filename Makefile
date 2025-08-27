@@ -17,11 +17,13 @@ test-worker:
 .PHONY: test-rest
 test-rest:
 	conda run -n $(REST_ENV) python -m pip install -e ./rest_api
+	conda run -n $(WORKER_ENV) python -m pip install -U "pytest>=7.0" "pytest-asyncio>=0.21" "pytest-mock>=3.10" "pytest-cov>=4.0"
 	conda run -n $(REST_ENV) pytest ./rest_api/tests
 
 .PHONY: test-ingest
 test-ingest:
 	conda run -n $(INGEST_ENV) python -m pip install -e ./ingest
+	conda run -n $(WORKER_ENV) python -m pip install -U "pytest>=7.0" "pytest-asyncio>=0.21" "pytest-mock>=3.10" "pytest-cov>=4.0"
 	conda run -n $(INGEST_ENV) pytest ./ingest/tests
 
 .PHONY: test-all
