@@ -42,6 +42,7 @@ jobs:
 
       - name: Run tests with coverage (per component)
         env:
+          # Base name; coverage will add a suffix because parallel=True
           COVERAGE_FILE: .coverage.${{ matrix.component.name }}
         run: |
           micromamba run -n "${{ matrix.component.env_name }}" \
@@ -50,12 +51,14 @@ jobs:
             --cov-report=xml:coverage.${{ matrix.component.name }}.xml \
             --cov-report=term-missing -q
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload coverage data artifact
+        uses: actions/upload-artifact@v4
         with:
           name: coverage-${{ matrix.component.name }}
           path: |
-            .coverage.${{ matrix.component.name }}
+            .coverage.${{ matrix.component.name }}*   # << pick up the suffixed files
             coverage.${{ matrix.component.name }}.xml
+  
 
   combine-and-badge:
     runs-on: ubuntu-latest
@@ -66,7 +69,12 @@ jobs:
         with:
           pattern: coverage-*
           merge-multiple: true
-
+      - run: |
+          echo "Workspace files:"
+          ls -la
+          echo "Coverage files found:"
+          ls -la .coverage* || true
+          ls -la coverage.*.xml || true
       - name: Combine & report
         run: |
           pipx install coverage coverage-badge

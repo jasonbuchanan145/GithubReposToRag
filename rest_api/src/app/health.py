@@ -4,6 +4,7 @@ from cassandra.cluster import Cluster
 from fastapi import FastAPI, Query, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi_health import health
+from fastapi.responses import JSONResponse
 import psutil
 import time
 from datetime import datetime
@@ -134,9 +135,11 @@ def register_health_endpoints(app: FastAPI,
 
         # Return appropriate HTTP status code based on health status
         if health_checks["status"] == "DOWN":
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=health_checks)
-
-        return health_checks
+            return JSONResponse(
+                status_code=503,
+                content=health_checks
+            )
+        return JSONResponse(content=health_checks)
 
 
 def _get_app_start_time():
