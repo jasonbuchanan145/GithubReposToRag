@@ -1,9 +1,12 @@
-# .github/workflows/tests.yml
 name: tests
 
 on:
   push:
   pull_request:
+
+# Needed to push the generated badge back to the repo (only on main pushes)
+permissions:
+  contents: write
 
 jobs:
   test:
@@ -19,15 +22,16 @@ jobs:
             env_file: environment-rest-api.yaml
             env_name: rag-api
             path: rest_api
-        #  - name: ingest
-        #    env_file: environment-scripts.yml
-        #    env_name: rag-demo
-        #    path: ingest
+          # - name: ingest
+          #   env_file: environment-scripts.yml
+          #   env_name: rag-demo
+          #   path: ingest
 
     steps:
       - uses: actions/checkout@v4
 
-      - uses: mamba-org/setup-micromamba@v2
+      - name: Set up micromamba
+        uses: mamba-org/setup-micromamba@v2
         with:
           environment-file: ${{ matrix.component.env_file }}
           environment-name: ${{ matrix.component.env_name }}
@@ -35,60 +39,93 @@ jobs:
           cache-downloads: true
           create-args: --yes
 
-      - name: Install package + pytest-cov
+      - name: Install package + pytest deps
+        shell: bash
         run: |
           micromamba run -n "${{ matrix.component.env_name }}" python -m pip install -e "./${{ matrix.component.path }}"
-          micromamba run -n "${{ matrix.component.env_name }}" python -m pip install "pytest>=7.0" "pytest-cov>=4.0" "pytest-asyncio>1.0.0"
+          micromamba run -n "${{ matrix.component.env_name }}" python -m pip install "pytest>=7.0" "pytest-cov>=4.0"
 
       - name: Run tests with coverage (per component)
         env:
-          # Base name; coverage will add a suffix because parallel=True
-          COVERAGE_FILE: .coverage.${{ matrix.component.name }}
+          # Make coverage data filenames deterministic per matrix leg.
+          # Coverage will append a suffix when parallel=True in .coveragerc
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage.${{ matrix.component.name }}
+          # Ensure coverage picks up .coveragerc automatically if present
+          COVERAGE_PROCESS_START: ${{ github.workspace }}/.coveragerc
+        shell: bash
         run: |
+          # Provide a sensible default .coveragerc if repo doesn't have one yet
+          if [ ! -f .coveragerc ]; then
+            cat > .coveragerc <<'RC'
+          [run]
+          parallel = True
+          source =
+          rag_worker/src
+          rest_api/src
+          ingest/src
+          [report]
+          skip_empty = True
+          show_missing = True
+          RC
+          fi
+  
           micromamba run -n "${{ matrix.component.env_name }}" \
-            pytest "./${{ matrix.component.path }}/tests" -m "not integration" \
-            --cov="${{ matrix.component.path }}/src" \
-            --cov-report=xml:coverage.${{ matrix.component.name }}.xml \
-            --cov-report=term-missing -q
+          pytest "./${{ matrix.component.path }}/tests" -m "not integration" \
+          --cov="${{ matrix.component.path }}/src" \
+          --cov-report=xml:coverage.${{ matrix.component.name }}.xml \
+          --cov-report=term-missing -q
 
-      - name: Upload coverage data artifact
+      - name: Upload coverage data + XML
         uses: actions/upload-artifact@v4
         with:
           name: coverage-${{ matrix.component.name }}
           path: |
-            .coverage.${{ matrix.component.name }}*   # << pick up the suffixed files
+            .coverage.${{ matrix.component.name }}*  # pick up suffixed data files
             coverage.${{ matrix.component.name }}.xml
-  
+          if-no-files-found: error
 
   combine-and-badge:
     runs-on: ubuntu-latest
     needs: [test]
-    if: github.event_name == 'push'  # only update badge on main
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
+
+      - name: Download all coverage artifacts
+        uses: actions/download-artifact@v4
         with:
           pattern: coverage-*
           merge-multiple: true
-      - run: |
-          echo "Workspace files:"
-          ls -la
-          echo "Coverage files found:"
-          ls -la .coverage* || true
-          ls -la coverage.*.xml || true
-      - name: Combine & report
+
+      - name: list coverage files
+        shell: bash
+        run: |
+          echo "Workspace files:"; ls -la
+          echo "Coverage data files:"; ls -la .coverage* || true
+          echo "Coverage XMLs:"; ls -la coverage.*.xml || true
+
+      - name: Combine & create reports + badge
+        shell: bash
         run: |
           pipx install coverage coverage-badge
           coverage combine
           coverage report -m
           coverage xml -o coverage.xml
+          coverage html -d htmlcov
           mkdir -p badges
-          coverage-badge -o .github/badges/coverage.svg -f
+          coverage-badge -o badges/coverage.svg -f
 
-      - name: Commit badge
+      - name: Upload HTML coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html
+          path: htmlcov
+
+      - name: Commit badge to main
+        if: github.event_name == 'push'
+        shell: bash
         run: |
-          if git diff --quiet .github/badges/coverage.svg; then
-            echo "No badge change."
-            exit 0
+          if git diff --quiet badges/coverage.svg; then
+            echo "No badge change."; exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
