@@ -102,11 +102,11 @@ jobs:
           name: coverage-html
           path: htmlcov
 
-      - name: Commit badge to main
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Commit badge
+        if: github.event_name == 'push'
         shell: bash
         run: |
-          if git diff --quiet badges/coverage.svg; then
+          if git diff --quiet .github/badges/coverage.svg; then
             echo "No badge change."; exit 0
           fi
           git config user.name "github-actions[bot]"
