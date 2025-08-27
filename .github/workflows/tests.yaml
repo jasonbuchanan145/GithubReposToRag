@@ -15,10 +15,10 @@ jobs:
             env_file: environment-worker.yaml
             env_name: worker
             path: rag_worker
-        #  - name: rest_api
-        #    env_file: environment-rest-api.yaml
-        #    env_name: rag-api
-        #    path: rest_api
+          - name: rest_api
+            env_file: environment-rest-api.yaml
+            env_name: rag-api
+            path: rest_api
         #  - name: ingest
         #    env_file: environment-scripts.yml
         #    env_name: rag-demo
@@ -26,22 +26,64 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - name: Set up micromamba
-        uses: mamba-org/setup-micromamba@v2
+
+      - uses: mamba-org/setup-micromamba@v2
         with:
           environment-file: ${{ matrix.component.env_file }}
           environment-name: ${{ matrix.component.env_name }}
           cache-environment: true
           cache-downloads: true
-          create-args: >-
-            --yes
+          create-args: --yes
 
-      - name: Install package
-        shell: bash
+      - name: Install package + pytest-cov
         run: |
           micromamba run -n "${{ matrix.component.env_name }}" python -m pip install -e "./${{ matrix.component.path }}"
-          micromamba run -n "${{ matrix.component.env_name }}" python -m pip install  -U "pytest>=7.0" "pytest-asyncio>=0.21" "pytest-mock>=3.10" "pytest-cov>=4.0"
-      - name: Run pytest
-        shell: bash
+          micromamba run -n "${{ matrix.component.env_name }}" python -m pip install "pytest>=7.0" "pytest-cov>=4.0"
+
+      - name: Run tests with coverage (per component)
+        env:
+          COVERAGE_FILE: .coverage.${{ matrix.component.name }}
         run: |
-          micromamba run -n "${{ matrix.component.env_name }}" pytest "./${{ matrix.component.path }}/tests" -m "not integration" -q
+          micromamba run -n "${{ matrix.component.env_name }}" \
+            pytest "./${{ matrix.component.path }}/tests" -m "not integration" \
+            --cov="${{ matrix.component.path }}/src" \
+            --cov-report=xml:coverage.${{ matrix.component.name }}.xml \
+            --cov-report=term-missing -q
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.component.name }}
+          path: |
+            .coverage.${{ matrix.component.name }}
+            coverage.${{ matrix.component.name }}.xml
+
+  combine-and-badge:
+    runs-on: ubuntu-latest
+    needs: [test]
+    if: github.event_name == 'push'  # only update badge on main
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-*
+          merge-multiple: true
+
+      - name: Combine & report
+        run: |
+          pipx install coverage coverage-badge
+          coverage combine
+          coverage report -m
+          coverage xml -o coverage.xml
+          mkdir -p badges
+          coverage-badge -o .github/badges/coverage.svg -f
+
+      - name: Commit badge
+        run: |
+          if git diff --quiet .github/badges/coverage.svg; then
+            echo "No badge change."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add badges/coverage.svg coverage.xml
+          git commit -m "chore(coverage): update badge [skip ci]"
+          git push

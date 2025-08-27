@@ -1,4 +1,3 @@
-"""Request and response models for the RAG API."""
 
 from typing import Dict, List, Any, Optional
 from pydantic import BaseModel
