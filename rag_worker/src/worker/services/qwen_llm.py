@@ -139,7 +139,7 @@ class QwenLLM(CustomLLM):
                 cleaned_text = self._clean_selector_response(text)
                 logging.info(f"Qwen LLM selector response: {cleaned_text}")
             else:
-                cleaned_text = self._clean_response(text)
+                cleaned_text = text
                 logging.info(f"Qwen LLM response: {cleaned_text}")
 
             return CompletionResponse(text=cleaned_text or "")

@@ -82,6 +82,11 @@ spec:
               value: "3"
             - name: MIN_SOURCE_NODES
               value: "1"
+            - name: METRICS_PORT
+              value: "9000"
+          ports:
+            - containerPort: 9000
+              name: metrics
           # simple liveness: arq will exit non-zero if it crashes; kube restarts
           livenessProbe:
             exec:

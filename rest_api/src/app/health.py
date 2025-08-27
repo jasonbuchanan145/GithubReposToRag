@@ -7,9 +7,16 @@ from fastapi_health import health
 import psutil
 import time
 from datetime import datetime
+from prometheus_client import Counter, Gauge, Histogram
 
 # Singleton variable for application start time
 _app_start_time = None
+
+# Health metrics
+HEALTH_CHECKS_TOTAL = Counter("rest_api_health_checks_total", "Total health checks")
+HEALTH_STATUS_GAUGE = Gauge("rest_api_health_status", "1=UP, 0=DOWN")
+HEALTH_LATENCY = Histogram("rest_api_health_duration_seconds", "Health endpoint duration in seconds")
+
 
 def register_health_endpoints(app: FastAPI, 
                              CASSANDRA_USERNAME: str,
@@ -24,7 +31,8 @@ def register_health_endpoints(app: FastAPI,
     @app.get("/health")
     async def detailed_health():
         """Comprehensive health check similar to Spring Boot Actuator"""
-        start_time = time.time()
+        t0 = time.perf_counter()
+        HEALTH_CHECKS_TOTAL.inc()
 
         health_checks = {
             "status": "UP",
@@ -118,7 +126,11 @@ def register_health_endpoints(app: FastAPI,
             health_checks["status"] = "DOWN"
 
         # Add response time
-        health_checks["details"]["response_time_ms"] = (time.time() - start_time) * 1000
+        duration = time.perf_counter() - t0
+        health_checks["details"]["response_time_ms"] = duration * 1000
+        # Update gauges
+        HEALTH_STATUS_GAUGE.set(1.0 if health_checks["status"] == "UP" else 0.0)
+        HEALTH_LATENCY.observe(duration)
 
         # Return appropriate HTTP status code based on health status
         if health_checks["status"] == "DOWN":

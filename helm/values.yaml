@@ -133,3 +133,56 @@ imagePullSecrets: []
 # This is to override the chart name.
 nameOverride: ""
 fullnameOverride: ""
+
+# Prometheus chart values (minimal)
+prometheus:
+  enabled: true
+  alertmanager:
+    enabled: false
+  pushgateway:
+    enabled: false
+  server:
+    # Use NodePort=false (ClusterIP); we access via kubectl port-forward if needed
+    service:
+      type: ClusterIP
+    # Explicit scrape configuration to honor prometheus.io/* annotations on Services
+    serverFiles:
+      prometheus.yml: |-
+        global:
+          scrape_interval: 15s
+          evaluation_interval: 15s
+        scrape_configs:
+          # Discover annotated Services and scrape their Endpoints
+          - job_name: 'kubernetes-services'
+            kubernetes_sd_configs:
+              - role: endpoints
+            relabel_configs:
+              - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scrape]
+                action: keep
+                regex: "true"
+              - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scheme]
+                action: replace
+                target: __scheme__
+                regex: (https?)
+              - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_path]
+                action: replace
+                target: __metrics_path__
+                regex: (.+)
+              - source_labels: [__address__, __meta_kubernetes_service_annotation_prometheus_io_port]
+                action: replace
+                target: __address__
+                regex: (.+?)(?::\d+)?;(\d+)
+                replacement: $1:$2
+              - action: labelmap
+                regex: __meta_kubernetes_service_label_(.+)
+              - source_labels: [__meta_kubernetes_namespace]
+                action: replace
+                target: namespace
+              - source_labels: [__meta_kubernetes_service_name]
+                action: replace
+                target: service
+    # Keep resources low for local Minikube
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
