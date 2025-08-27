@@ -358,7 +358,7 @@ What the script does (high level):
 * Enables addons: `ingress`, `default-storageclass`, `storage-provisioner`, `volumesnapshots`
 * Builds & loads local Docker images into Minikube registry:
 
-    * `rag-ingest`, `rag-api`, `rag-frontend`
+    * `rag-ingest`, `rag-api`, `rag-worker`
 * Creates/uses namespace: `rag`
 * Prompts for your **GitHub username** and a **fine‑grained PAT** (read‑only) and stores it in `rag` namespace as secret `github-token`
 * Installs Helm release `rag-demo` with images tagged `dev`
