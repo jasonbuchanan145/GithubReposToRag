@@ -1,0 +1,47 @@
+# .github/workflows/tests.yml
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        component:
+          - name: rag_worker
+            env_file: environment-worker.yaml
+            env_name: worker
+            path: rag_worker
+        #  - name: rest_api
+        #    env_file: environment-rest-api.yaml
+        #    env_name: rag-api
+        #    path: rest_api
+        #  - name: ingest
+        #    env_file: environment-scripts.yml
+        #    env_name: rag-demo
+        #    path: ingest
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up micromamba
+        uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: ${{ matrix.component.env_file }}
+          environment-name: ${{ matrix.component.env_name }}
+          cache-environment: true
+          cache-downloads: true
+          create-args: >-
+            --yes
+
+      - name: Install package
+        shell: bash
+        run: |
+          micromamba run -n "${{ matrix.component.env_name }}" python -m pip install -e "./${{ matrix.component.path }}"
+          micromamba run -n "${{ matrix.component.env_name }}" python -m pip install  -U "pytest>=7.0" "pytest-asyncio>=0.21" "pytest-mock>=3.10" "pytest-cov>=4.0"
+      - name: Run pytest
+        shell: bash
+        run: |
+          micromamba run -n "${{ matrix.component.env_name }}" pytest "./${{ matrix.component.path }}/tests" -m "not integration" -q

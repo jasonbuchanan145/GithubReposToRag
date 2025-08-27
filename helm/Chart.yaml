@@ -32,3 +32,7 @@ dependencies:
   alias: cassandra
   version: 12.3.8
   repository: oci://registry-1.docker.io/bitnamicharts
+- name: prometheus
+  version: 25.22.0
+  repository: https://prometheus-community.github.io/helm-charts
+  condition: prometheus.enabled

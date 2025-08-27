@@ -16,6 +16,7 @@ dependencies:
   - sentence-transformers>=5.0.0
   - pytorch=2.3.*           # CPU build by default
   - libgcc-ng
+  - prometheus_client>=0.20
   - pip:
       - vllm>=0.4.3
       # LlamaIndex dependencies (not in conda-forge)

@@ -8,6 +8,7 @@ from rag_shared.config import (
 
 _session = None
 
+
 def get_cassandra_session():
     global _session
     if _session is not None:
@@ -16,6 +17,7 @@ def get_cassandra_session():
     cluster = Cluster([CASSANDRA_HOST], port=CASSANDRA_PORT, auth_provider=auth)
     _session = cluster.connect(CASSANDRA_KEYSPACE)
     return _session
+
 
 def vector_store_for_table(table: str) -> CassandraVectorStore:
     session = get_cassandra_session()
