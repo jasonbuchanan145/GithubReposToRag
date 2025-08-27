@@ -1,3 +1,5 @@
+[![build](https://github.com/jasonbuchanan145/GithubReposToRag/actions/workflows/tests.yaml/badge.svg)](https://github.com/jasonbuchanan145/GithubReposToRag/actions/workflows/tests.yaml) [![codecov](https://codecov.io/gh/jasonbuchanan145/GithubReposToRag/graph/badge.svg)](https://codecov.io/gh/jasonbuchanan145/GithubReposToRag)
+
 # CodeRAG: Intelligent Code Repository Assistant
 
 A specialized RAG (Retrieval Augmented Generation) system for intelligent code repository analysis and assistance. CodeRAG ingests repositories, 
