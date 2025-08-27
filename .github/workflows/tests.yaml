@@ -1,9 +1,12 @@
-# .github/workflows/tests.yml
 name: tests
 
 on:
   push:
   pull_request:
+
+# Needed to push the generated badge back to the repo (only on main pushes)
+permissions:
+  contents: write
 
 jobs:
   test:
@@ -15,17 +18,18 @@ jobs:
             env_file: environment-worker.yaml
             env_name: worker
             path: rag_worker
-        #  - name: rest_api
-        #    env_file: environment-rest-api.yaml
-        #    env_name: rag-api
-        #    path: rest_api
-        #  - name: ingest
-        #    env_file: environment-scripts.yml
-        #    env_name: rag-demo
-        #    path: ingest
+          - name: rest_api
+            env_file: environment-rest-api.yaml
+            env_name: rag-api
+            path: rest_api
+          # - name: ingest
+          #   env_file: environment-scripts.yml
+          #   env_name: rag-demo
+          #   path: ingest
 
     steps:
       - uses: actions/checkout@v4
+
       - name: Set up micromamba
         uses: mamba-org/setup-micromamba@v2
         with:
@@ -33,15 +37,66 @@ jobs:
           environment-name: ${{ matrix.component.env_name }}
           cache-environment: true
           cache-downloads: true
-          create-args: >-
-            --yes
+          create-args: --yes
 
-      - name: Install package
+      - name: Install package + pytest deps
         shell: bash
         run: |
           micromamba run -n "${{ matrix.component.env_name }}" python -m pip install -e "./${{ matrix.component.path }}"
-          micromamba run -n "${{ matrix.component.env_name }}" python -m pip install  -U "pytest>=7.0" "pytest-asyncio>=0.21" "pytest-mock>=3.10" "pytest-cov>=4.0"
-      - name: Run pytest
+          micromamba run -n "${{ matrix.component.env_name }}" python -m pip install "pytest>=7.0" "pytest-cov>=4.0" "pytest-asyncio>=1.0.0"
+
+      - name: Run tests with coverage (per component)
+        env:
+         COVERAGE_FILE: .coverage.${{ matrix.component.name }}
+
         shell: bash
         run: |
-          micromamba run -n "${{ matrix.component.env_name }}" pytest "./${{ matrix.component.path }}/tests" -m "not integration" -q
+          micromamba run -n "${{ matrix.component.env_name }}" \
+            pytest "./${{ matrix.component.path }}/tests" -m "not integration" \
+            --cov="${{ matrix.component.path }}/src" \
+            --cov-report=xml:coverage.${{ matrix.component.name }}.xml \
+            --cov-report=term-missing -q
+
+      - name: Upload coverage data + XML
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.component.name }}
+          path: |
+            .coverage.${{ matrix.component.name }}
+            coverage.${{ matrix.component.name }}.xml
+          include-hidden-files: 'true'
+          if-no-files-found: error
+
+  combine-and-badge:
+    runs-on: ubuntu-latest
+    needs: [test]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all coverage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-*
+          merge-multiple: true
+
+      - name: list coverage files
+        shell: bash
+        run: |
+          echo "Coverage data files:"; ls -la .coverage* || true
+          echo "Coverage XMLs:"; ls -la coverage.*.xml || true
+
+      - name: Combine & create reports + badge
+        shell: bash
+        run: |
+          pipx install coverage
+          coverage combine .coverage.*      # from your artifacts
+          coverage xml -i -o coverage.xml
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.xml
+          flags: unit
+          name: combined
+          fail_ci_if_error: true
