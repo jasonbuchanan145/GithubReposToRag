@@ -46,49 +46,24 @@ jobs:
           micromamba run -n "${{ matrix.component.env_name }}" python -m pip install "pytest>=7.0" "pytest-cov>=4.0" "pytest-asyncio>=1.0.0"
 
       - name: Run tests with coverage (per component)
-        env:
-          # Make coverage data filenames deterministic per matrix leg.
-          # Coverage will append a suffix when parallel=True in .coveragerc
-          COVERAGE_FILE: ${{ github.workspace }}/.coverage.${{ matrix.component.name }}
-          # Ensure coverage picks up .coveragerc automatically if present
-          COVERAGE_PROCESS_START: ${{ github.workspace }}/.coveragerc
         shell: bash
         run: |
-          # Provide a sensible default .coveragerc if repo doesn't have one yet
-          if [ ! -f .coveragerc ]; then
-            cat > .coveragerc <<'RC'
-           cat > .coveragerc <<'RC'
-          [run]
-          parallel = True
-          source = rag_worker/src, rest_api/src
-          [report]
-          skip_empty = True
-          show_missing = True
-          RC
-          fi
-          
           micromamba run -n "${{ matrix.component.env_name }}" \
-          pytest "./${{ matrix.component.path }}/tests" -m "not integration" \
-          --cov="${{ matrix.component.path }}/src" \
-          --cov-report=xml:coverage.${{ matrix.component.name }}.xml \
-          --cov-report=term-missing -q
+            pytest "./${{ matrix.component.path }}/tests" -m "not integration" \
+            --cov="${{ matrix.component.path }}/src" \
+            --cov-report=xml:coverage.${{ matrix.component.name }}.xml \
+            --cov-report=term-missing -q
 
-      - name: Normalize coverage filename (combine if parallel)
+      - name: Normalize coverage data
         shell: bash
         run: |
           set -euxo pipefail
-          # If parallel data files exist, combine them into .coverage
+          # If parallel data files exist (from subprocess coverage), combine them into .coverage
           if ls .coverage.* 1> /dev/null 2>&1; then
-            micromamba run -n "${{ matrix.component.env_name }}" coverage combine
+            micromamba run -n "${{ matrix.component.env_name }}" python -m coverage combine || true
           fi
-          # At this point we expect a single .coverage file
-          if [ -f .coverage ]; then
-            mv .coverage ".coverage.${{ matrix.component.name }}"
-          else
-            echo "ERROR: No .coverage data file found after pytest" >&2
-            ls -la
-            exit 1
-          fi
+          test -f .coverage || { echo "ERROR: No .coverage data file found after pytest" >&2; ls -la; exit 1; }
+          mv .coverage ".coverage.${{ matrix.component.name }}"
 
       - name: Upload coverage data + XML
         uses: actions/upload-artifact@v4
@@ -98,7 +73,6 @@ jobs:
             .coverage.${{ matrix.component.name }}
             coverage.${{ matrix.component.name }}.xml
           if-no-files-found: error
-
 
   combine-and-badge:
     runs-on: ubuntu-latest
@@ -112,10 +86,9 @@ jobs:
           pattern: coverage-*
           merge-multiple: true
 
-      - name:  list coverage files
+      - name: list coverage files
         shell: bash
         run: |
-          echo "Workspace files:"; ls -la
           echo "Coverage data files:"; ls -la .coverage* || true
           echo "Coverage XMLs:"; ls -la coverage.*.xml || true
 
@@ -137,7 +110,7 @@ jobs:
           path: htmlcov
 
       - name: Commit badge to main
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: bash
         run: |
           if git diff --quiet badges/coverage.svg; then
