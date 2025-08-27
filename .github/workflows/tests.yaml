@@ -60,7 +60,7 @@ jobs:
            cat > .coveragerc <<'RC'
           [run]
           parallel = True
-          source = rag_worker/src, rest_api/src, ingest/src
+          source = rag_worker/src, rest_api/src
           [report]
           skip_empty = True
           show_missing = True
