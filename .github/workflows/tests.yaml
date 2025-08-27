@@ -88,29 +88,15 @@ jobs:
       - name: Combine & create reports + badge
         shell: bash
         run: |
-          pipx install coverage coverage-badge
-          coverage combine
-          coverage report -m
-          coverage xml -o coverage.xml
-          coverage html -d htmlcov
-          mkdir -p badges
-          coverage-badge -o badges/coverage.svg -f
+          pipx install coverage
+          coverage combine .coverage.*      # from your artifacts
+          coverage xml -i -o coverage.xml
 
-      - name: Upload HTML coverage
-        uses: actions/upload-artifact@v4
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v5
         with:
-          name: coverage-html
-          path: htmlcov
-
-      - name: Commit badge
-        if: github.event_name == 'push'
-        shell: bash
-        run: |
-          if git diff --quiet .github/badges/coverage.svg; then
-            echo "No badge change."; exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add badges/coverage.svg coverage.xml
-          git commit -m "chore(coverage): update badge [skip ci]"
-          git push
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.xml
+          flags: unit
+          name: combined
+          fail_ci_if_error: true
