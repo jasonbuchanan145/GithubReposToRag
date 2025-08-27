@@ -94,7 +94,7 @@ jobs:
           coverage xml -o coverage.xml
           coverage html -d htmlcov
           mkdir -p badges
-          coverage-badge -o badges/coverage.svg -f
+          coverage-badge -o .github/badges/coverage.svg -f
 
       - name: Upload HTML coverage
         uses: actions/upload-artifact@v4
@@ -106,11 +106,8 @@ jobs:
         if: github.event_name == 'push'
         shell: bash
         run: |
-          if git diff --quiet .github/badges/coverage.svg; then
-            echo "No badge change."; exit 0
-          fi
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add badges/coverage.svg coverage.xml
+          git add .github/badges/coverage.svg
           git commit -m "chore(coverage): update badge [skip ci]"
           git push
