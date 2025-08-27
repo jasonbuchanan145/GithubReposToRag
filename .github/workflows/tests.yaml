@@ -43,7 +43,7 @@ jobs:
         shell: bash
         run: |
           micromamba run -n "${{ matrix.component.env_name }}" python -m pip install -e "./${{ matrix.component.path }}"
-          micromamba run -n "${{ matrix.component.env_name }}" python -m pip install "pytest>=7.0" "pytest-cov>=4.0"
+          micromamba run -n "${{ matrix.component.env_name }}" python -m pip install "pytest>=7.0" "pytest-cov>=4.0" "pytest-asyncio>=1.0.0"
 
       - name: Run tests with coverage (per component)
         env:
