@@ -46,6 +46,9 @@ jobs:
           micromamba run -n "${{ matrix.component.env_name }}" python -m pip install "pytest>=7.0" "pytest-cov>=4.0" "pytest-asyncio>=1.0.0"
 
       - name: Run tests with coverage (per component)
+        env:
+         COVERAGE_FILE: .coverage.${{ matrix.component.name }}
+
         shell: bash
         run: |
           micromamba run -n "${{ matrix.component.env_name }}" \
@@ -53,17 +56,6 @@ jobs:
             --cov="${{ matrix.component.path }}/src" \
             --cov-report=xml:coverage.${{ matrix.component.name }}.xml \
             --cov-report=term-missing -q
-
-      - name: Normalize coverage data
-        shell: bash
-        run: |
-          set -euxo pipefail
-          # If parallel data files exist (from subprocess coverage), combine them into .coverage
-          if ls .coverage.* 1> /dev/null 2>&1; then
-            micromamba run -n "${{ matrix.component.env_name }}" python -m coverage combine || true
-          fi
-          test -f .coverage || { echo "ERROR: No .coverage data file found after pytest" >&2; ls -la; exit 1; }
-          mv .coverage ".coverage.${{ matrix.component.name }}"
 
       - name: Upload coverage data + XML
         uses: actions/upload-artifact@v4
