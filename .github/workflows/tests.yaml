@@ -40,7 +40,7 @@ jobs:
         shell: bash
         run: |
           micromamba run -n "${{ matrix.component.env_name }}" python -m pip install -e "./${{ matrix.component.path }}"
-
+          micromamba run -n "${{ matrix.component.env_name }}" python -m pip install  -U "pytest>=7.0" "pytest-asyncio>=0.21" "pytest-mock>=3.10" "pytest-cov>=4.0"
       - name: Run pytest
         shell: bash
         run: |
