@@ -62,7 +62,6 @@ jobs:
           source =
           rag_worker/src
           rest_api/src
-          ingest/src
           [report]
           skip_empty = True
           show_missing = True
