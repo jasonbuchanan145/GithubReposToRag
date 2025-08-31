@@ -1,0 +1,175 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cassandra-initdb
+  namespace: <YOUR_NAMESPACE>
+data:
+  00_schema.cql: |
+    -- ============================================
+    -- Cassandra 5 schema for GraphRAG-ready vector tables
+    -- ============================================
+    CREATE KEYSPACE IF NOT EXISTS code_index
+                WITH REPLICATION = { 'class' : 'SimpleStrategy', 'replication_factor' : 1 };
+
+    USE code_index;
+
+    -- Set your embedding dimension here
+    -- VECTOR<FLOAT, 384>
+
+    -- ========== CATALOG (L0) ==========
+    CREATE TABLE IF NOT EXISTS embeddings_catalog (
+                                                      row_id          TEXT PRIMARY KEY,
+                                                      body_blob       TEXT,
+                                                      vector          VECTOR<FLOAT, 384>,
+                                                      attributes_blob TEXT,
+                                                      metadata_s      TEXT,
+
+                                                      scope           TEXT,
+                                                      namespace       TEXT,
+                                                      repo            TEXT,
+                                                      owner           TEXT,
+                                                      component_kind  TEXT,
+                                                      language        TEXT,
+                                                      topic           TEXT,
+                                                      label           TEXT
+    );
+
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_catalog_vector_idx
+        ON embeddings_catalog (vector) USING 'sai'
+                WITH OPTIONS = { 'similarity_function': 'cosine' };
+
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_catalog_scope_idx      ON embeddings_catalog (scope)      USING 'sai';
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_catalog_namespace_idx  ON embeddings_catalog (namespace)  USING 'sai';
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_catalog_repo_idx       ON embeddings_catalog (repo)       USING 'sai';
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_catalog_owner_idx      ON embeddings_catalog (owner)      USING 'sai';
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_catalog_kind_idx       ON embeddings_catalog (component_kind) USING 'sai';
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_catalog_language_idx   ON embeddings_catalog (language)   USING 'sai';
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_catalog_topic_idx      ON embeddings_catalog (topic)      USING 'sai';
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_catalog_label_idx      ON embeddings_catalog (label)      USING 'sai';
+
+    -- ========== REPO (L1) ==========
+    CREATE TABLE IF NOT EXISTS embeddings_repo (
+                                                   row_id          TEXT PRIMARY KEY,
+                                                   body_blob       TEXT,
+                                                   vector          VECTOR<FLOAT, 384>,
+                                                   attributes_blob TEXT,
+                                                   metadata_s      TEXT,
+
+                                                   scope           TEXT,
+                                                   namespace       TEXT,
+                                                   repo            TEXT,
+                                                   owner           TEXT,
+                                                   language        TEXT,
+                                                   topic           TEXT,
+                                                   label           TEXT
+    );
+
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_repo_vector_idx
+        ON embeddings_repo (vector) USING 'sai'
+                WITH OPTIONS = { 'similarity_function': 'cosine' };
+
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_repo_scope_idx     ON embeddings_repo (scope)     USING 'sai';
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_repo_namespace_idx ON embeddings_repo (namespace) USING 'sai';
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_repo_repo_idx      ON embeddings_repo (repo)      USING 'sai';
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_repo_owner_idx     ON embeddings_repo (owner)     USING 'sai';
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_repo_language_idx  ON embeddings_repo (language)  USING 'sai';
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_repo_topic_idx     ON embeddings_repo (topic)     USING 'sai';
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_repo_label_idx     ON embeddings_repo (label)     USING 'sai';
+
+    -- ========== MODULE (L2) ==========
+    CREATE TABLE IF NOT EXISTS embeddings_module (
+                                                     row_id          TEXT PRIMARY KEY,
+                                                     body_blob       TEXT,
+                                                     vector          VECTOR<FLOAT, 384>,
+                                                     attributes_blob TEXT,
+                                                     metadata_s      TEXT,
+
+                                                     scope           TEXT,
+                                                     namespace       TEXT,
+                                                     repo            TEXT,
+                                                     module          TEXT,
+                                                     language        TEXT,
+                                                     topic           TEXT,
+                                                     import          TEXT,
+                                                     label           TEXT
+    );
+
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_module_vector_idx
+        ON embeddings_module (vector) USING 'sai'
+                WITH OPTIONS = { 'similarity_function': 'cosine' };
+
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_module_scope_idx     ON embeddings_module (scope)     USING 'sai';
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_module_namespace_idx ON embeddings_module (namespace) USING 'sai';
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_module_repo_idx      ON embeddings_module (repo)      USING 'sai';
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_module_module_idx    ON embeddings_module (module)    USING 'sai';
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_module_language_idx  ON embeddings_module (language)  USING 'sai';
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_module_topic_idx     ON embeddings_module (topic)     USING 'sai';
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_module_import_idx    ON embeddings_module (import)    USING 'sai';
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_module_label_idx     ON embeddings_module (label)     USING 'sai';
+
+    -- ========== FILE (L3) ==========
+    CREATE TABLE IF NOT EXISTS embeddings_file (
+                                                   row_id          TEXT PRIMARY KEY,
+                                                   body_blob       TEXT,
+                                                   vector          VECTOR<FLOAT, 384>,
+                                                   attributes_blob TEXT,
+                                                   metadata_s      TEXT,
+
+                                                   scope           TEXT,
+                                                   namespace       TEXT,
+                                                   repo            TEXT,
+                                                   module          TEXT,
+                                                   file_path       TEXT,
+                                                   language        TEXT,
+                                                   topic           TEXT,
+                                                   import          TEXT,
+                                                   label           TEXT
+    );
+
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_file_vector_idx
+        ON embeddings_file (vector) USING 'sai'
+                WITH OPTIONS = { 'similarity_function': 'cosine' };
+
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_file_scope_idx     ON embeddings_file (scope)     USING 'sai';
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_file_namespace_idx ON embeddings_file (namespace) USING 'sai';
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_file_repo_idx      ON embeddings_file (repo)      USING 'sai';
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_file_module_idx    ON embeddings_file (module)    USING 'sai';
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_file_path_idx      ON embeddings_file (file_path) USING 'sai';
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_file_language_idx  ON embeddings_file (language)  USING 'sai';
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_file_topic_idx     ON embeddings_file (topic)     USING 'sai';
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_file_import_idx    ON embeddings_file (import)    USING 'sai';
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_file_label_idx     ON embeddings_file (label)     USING 'sai';
+
+    -- ========== CHUNK (L4) ==========
+    -- keep legacy table name 'embeddings' for chunk-level vectors
+    CREATE TABLE IF NOT EXISTS embeddings (
+                                              row_id          TEXT PRIMARY KEY,
+                                              body_blob       TEXT,
+                                              vector          VECTOR<FLOAT, 384>,
+                                              attributes_blob TEXT,
+                                              metadata_s      TEXT,
+
+                                              scope           TEXT,
+                                              namespace       TEXT,
+                                              repo            TEXT,
+                                              module          TEXT,
+                                              file_path       TEXT,
+                                              symbol          TEXT,
+                                              language        TEXT,
+                                              topic           TEXT,
+                                              import          TEXT
+    );
+
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_vector_idx
+        ON embeddings (vector) USING 'sai'
+                WITH OPTIONS = { 'similarity_function': 'cosine' };
+
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_scope_idx     ON embeddings (scope)     USING 'sai';
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_namespace_idx ON embeddings (namespace) USING 'sai';
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_repo_idx      ON embeddings (repo)      USING 'sai';
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_module_idx    ON embeddings (module)    USING 'sai';
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_path_idx      ON embeddings (file_path) USING 'sai';
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_symbol_idx    ON embeddings (symbol)    USING 'sai';
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_language_idx  ON embeddings (language)  USING 'sai';
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_topic_idx     ON embeddings (topic)     USING 'sai';
+    CREATE CUSTOM INDEX IF NOT EXISTS embeddings_import_idx    ON embeddings (import)    USING 'sai';

@@ -1,5 +1,7 @@
 from __future__ import annotations
 import logging
+from collections import defaultdict
+from pathlib import PurePosixPath
 from typing import List
 from llama_index.core import Document
 from app.services.jupyter_notebook_handling import JupyterNotebookProcessor
@@ -13,7 +15,7 @@ SKIP_EXT = {
     ".mp3", ".wav", ".mp4", ".avi", ".mov", ".mkv", ".flv",
     ".zip", ".tar", ".gz", ".rar", ".7z", ".bz2",
     ".exe", ".dll", ".so", ".dylib", ".bin",
-    ".log", ".dump", ".backup",
+    ".log", ".dump", ".backup", ".drawio"
     ".db", ".sqlite", ".sqlite3",
 }
 
@@ -34,6 +36,22 @@ SKIP_NAMES = {
     ".dockerignore", ".eslintignore", ".prettierignore",
 }
 
+def top_directory(path: str, depth: int = 1) -> str:
+    p = PurePosixPath(path or "")
+    parts = [x for x in p.parts if x not in (".",)]
+    return "/".join(parts[:depth]) if parts else ""
+
+def group_nodes_by_file(nodes):
+    by_file = defaultdict(list)
+    for n in nodes:
+        by_file[(n.metadata.get("file_path") or n.metadata.get("path") or "")].append(n)
+    return by_file
+
+def group_files_by_module(file_paths, depth: int = 1):
+    by_mod = defaultdict(list)
+    for fp in file_paths:
+        by_mod[top_directory(fp, depth=depth)].append(fp)
+    return by_mod
 
 def filter_documents(documents: List[Document]) -> List[Document]:
     logging.info(f"🔍 Filtering {len(documents)} documents...")

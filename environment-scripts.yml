@@ -1,30 +1,43 @@
 name: rag-demo
-channels: [conda-forge, defaults, pytorch]
+channels: [conda-forge, pytorch, defaults]
 dependencies:
   - python=3.11
   - pip
-  - cassandra-driver=3.28.*
-  # Jupyter notebook processing
+  - cassandra-driver=3.29.*         # Cassandra 5-compatible
+  # Jupyter (optional, keep if you use notebooks)
   - nbformat
   - nbconvert
-  # Git operations
+  # Git ops
   - gitpython
+  # Core ML / NLP
   - transformers>=4.41
+  - sentence-transformers>=2.3.0    # must match your embedding dim choice
+  - pytorch=2.3.*                   # CPU build by default
   - pydantic=2.7.1
   - requests>=2.28.0
   - python-dotenv>=1.0.0
-  - sentence-transformers>=5.0.0
-  - pytorch=2.3.*           # CPU build by default
+  - networkx>=3.2                   # GraphRAG viz/debug
   - libgcc-ng
   - prometheus_client>=0.20
   - pip:
       - vllm>=0.4.3
-      # LlamaIndex dependencies (not in conda-forge)
+      # ---- GraphRAG + LangChain + CassIO (Cassandra) ----
+      - cassio>=0.1.6
+      - langchain>=0.2.10
+      - langchain-community>=0.2.10
+      - langchain-graph-retriever>=0.2.0
+      - graph-retriever>=0.2.0
+      - langchain-huggingface>=0.1.0   # or rely on langchain_community.embeddings
+
+      # ---- LlamaIndex (still used for building/chunking summaries) ----
       - llama-index-core>=0.10.0
       - llama-index-llms-openai>=0.1.0
       - llama-index-readers-github>=0.1.3
-      - llama-index-vector-stores-cassandra>=0.1.1
       - llama-index-embeddings-huggingface>=0.1.0
-      # Required for CodeSplitter
+      # (You can drop llama-index-vector-stores-cassandra now that writes go via LangChain)
+
+      # Code splitting helpers
       - tree_sitter>=0.20.1
       - tree_sitter_language_pack
+      - pyyaml>=6.0
+      - rich>=13.0

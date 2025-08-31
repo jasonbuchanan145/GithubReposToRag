@@ -15,21 +15,19 @@ CASSANDRA_USERNAME = os.getenv("CASSANDRA_USERNAME", "cassandra")
 CASSANDRA_PASSWORD = os.getenv("CASSANDRA_PASSWORD", "testyMcTesterson")
 CASSANDRA_KEYSPACE = os.getenv("CASSANDRA_KEYSPACE", "vector_store")
 
-# Tables / Namespaces per level (future-proof)
-# If you currently use a single table, leave *_TABLE unset to fall back to DEFAULT_TABLE.
 DEFAULT_TABLE = os.getenv("DEFAULT_TABLE", "embeddings")
 CODE_TABLE = os.getenv("CODE_TABLE", DEFAULT_TABLE)
 PACKAGE_TABLE = os.getenv("PACKAGE_TABLE", DEFAULT_TABLE)
 PROJECT_TABLE = os.getenv("PROJECT_TABLE", DEFAULT_TABLE)
 
 # Embeddings
-EMBED_MODEL = os.getenv("EMBED_MODEL", "intfloat/e5-small-v2")
+EMBED_MODEL = os.getenv("EMBED_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 EMBED_DIM = int(os.getenv("EMBED_DIM", "384"))
 
 # LLM (Qwen via vLLM/OpenAI API compat)
 QWEN_ENDPOINT = os.getenv("QWEN_ENDPOINT", "http://qwen:8000")
 QWEN_MODEL = os.getenv("QWEN_MODEL", "Qwen/Qwen2.5-3B-Instruct")
-QWEN_MAX_OUTPUT = int(os.getenv("QWEN_MAX_OUTPUT", "1024"))
+QWEN_MAX_OUTPUT = int(os.getenv("QWEN_MAX_OUTPUT", "4096"))
 QWEN_TEMPERATURE = float(os.getenv("QWEN_TEMPERATURE", "0.7"))
 QWEN_TOP_P = float(os.getenv("QWEN_TOP_P", "0.9"))
 

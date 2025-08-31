@@ -1,11 +1,9 @@
-# Stage 1 – prep
-# Stop on any non-handled error and enable strict mode
-$ErrorActionPreference = 'Stop'
-
-# Parse command line parameters
 param(
     [string]$GithubUser
 )
+# Stage 1 – prep
+# Stop on any non-handled error and enable strict mode
+$ErrorActionPreference = 'Stop'
 
 # Handle GitHub user parameter
 if (-not $GithubUser) {

@@ -50,10 +50,11 @@ class CassandraService:
         logging.info("Connected to Cassandra keyspace=%s", self._settings.cassandra_keyspace)
         return CassandraHandles(cluster=cluster, session=session)
 
-    def vector_store(self, session) -> CassandraVectorStore:
+    def vector_store(self, session, *, table: str) -> CassandraVectorStore:
+        """Return a vector store bound to the given table (created if needed)."""
         return CassandraVectorStore(
-            session=session,
-            table=self._settings.embeddings_table,
+           session=session,
+            table=table,
             embedding_dimension=self._settings.embed_dim,
             keyspace=self._settings.cassandra_keyspace,
         )

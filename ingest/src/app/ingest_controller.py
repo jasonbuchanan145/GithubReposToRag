@@ -10,20 +10,20 @@ from typing import Dict, List, Optional, Tuple, Union
 from cassandra.util import uuid_from_time
 from llama_index.core import Document
 # Use IngestionPipeline to write nodes directly to vector store
-from llama_index.core.ingestion import IngestionPipeline
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 
-from app.catalog.catalog_builder import make_catalog_document
 from app.config import SETTINGS
 from app.llm_init import QwenLLM
-from app.pipelines.catalog_pipeline import build_catalog_pipeline
 from app.services.cassandra_service import CassandraService
+from app.services.catalog_service import CatalogService
+from app.services.code_pipeline_service import CodePipelineService
 from app.services.github_service import GithubService, fetch_repositories
+from app.services.hierarchy_summary_service import HierarchySummaryService
+from app.services.preprocess_service import PreprocessService
 from app.services.transform_service import (
-    filter_documents,
-    transform_special_files,
     infer_component_kind,
 )
+from app.services.vector_write_service import VectorWriteService
 from app.streaming import stream_event, stream_step
 
 
@@ -52,6 +52,16 @@ def _attach_common_metadata(nodes, *, namespace: str, repo: str, branch: str, co
         md["ingest_run_id"] = str(run_id)
         md.setdefault("doc_type", doc_type)
         md.setdefault("path", md.get("file_path"))
+        if doc_type == "catalog":
+            md["scope"] = "catalog"
+        elif doc_type == "repo":
+            md["scope"] = "repo"
+        elif doc_type == "module":
+            md["scope"] = "module"
+        elif doc_type == "file":
+            md["scope"] = "file"
+        else:
+            md["scope"] = "chunk"
         # Language should already be set during document preprocessing
 
 
@@ -65,197 +75,56 @@ def ingest_component(
         component_kind: Optional[str] = None,
         dev_force_standalone: Optional[bool] = None,
 ) -> Dict[str, Union[str, int, bool]]:
-    """Controller: ingest one component/repo into the code index and catalog.
+    """
+    Controller: ingest one component/repo into hierarchical RAG (catalog, repo, module, file, chunk).
 
-    Returns a dict with audit/verification stats.
+    Keeps this thin by delegating to services:
+      - PreprocessService.prepare_repo_documents
+      - CodePipelineService.build_code_nodes
+      - CatalogService.build_catalog_nodes
+      - HierarchySummaryService.build_file_nodes / build_module_nodes / build_repo_nodes
+      - VectorWriteService.write_nodes_per_scope
     """
 
+    # ── config & services ───────────────────────────────────────────────────
     branch = branch or SETTINGS.default_branch
     collection = collection or SETTINGS.default_collection
-
     force = SETTINGS.dev_force_standalone if dev_force_standalone is None else bool(dev_force_standalone)
 
     stream_event("ingest_start", {"repo": repo, "namespace": namespace, "branch": branch, "collection": collection, "force": force})
 
-    gh = GithubService()
+    gh   = GithubService()
     cass = CassandraService()
+    qwen_llm = QwenLLM()
 
     handles = cass.connect()
     session = handles.session
-    vector_store = cass.vector_store(session)
 
-    # 1) Load docs
+    kind = "standalone" if force else (component_kind or infer_component_kind([]))  # real kind is set after docs load
+    is_standalone = (kind == "standalone")
+    run_id = uuid.uuid4()
+
+    # ── 1) Load & normalize docs ────────────────────────────────────────────
     stream_step("load_docs", repo=repo, branch=branch)
     raw_docs = gh.load_repo_documents(repo, branch)
-    logging.info(f"📄 Loaded {len(raw_docs)} raw documents from GitHub")
+    stream_step("preprocess_docs", repo=repo, branch=branch)
 
-    filtered = filter_documents(raw_docs)
-    logging.info(f"🔍 After filtering: {len(filtered)} documents remain")
-
-    transformed = transform_special_files(filtered)
-    logging.info(f"🔄 After transformation: {len(transformed)} documents remain")
-
-    # Add language detection to document metadata before processing
-    # Map extensions to tree-sitter language names based on tree-sitter-language-pack
-    EXTENSION_TO_LANGUAGE = {
-        '.js': 'javascript',
-        '.jsx': 'javascript', 
-        '.ts': 'typescript',
-        '.tsx': 'typescript',
-        '.py': 'python',
-        '.java': 'java',
-        '.cpp': 'cpp',
-        '.cc': 'cpp',
-        '.cxx': 'cpp',
-        '.c': 'c',
-        '.h': 'c',
-        '.cs': 'c_sharp',
-        '.php': 'php',
-        '.rb': 'ruby',
-        '.go': 'go',
-        '.rs': 'rust',
-        '.swift': 'swift',
-        '.kt': 'kotlin',
-        '.scala': 'scala',
-        '.sh': 'bash',
-        '.bash': 'bash',
-        '.sql': 'sql',
-        '.html': 'html',
-        '.htm': 'html',
-        '.css': 'css',
-        '.json': 'json',
-        '.xml': 'xml',
-        '.yaml': 'yaml',
-        '.yml': 'yaml',
-        '.toml': 'toml',
-        '.md': 'markdown',
-        '.dockerfile': 'dockerfile',
-    }
-
-    for doc in transformed:
-        if "language" not in doc.metadata and doc.metadata.get("file_path"):
-            file_path = doc.metadata["file_path"]
-            filename = file_path.split("/")[-1].lower()  # Get just the filename
-
-            # Special case: Dockerfile (no extension)
-            if filename == 'dockerfile':
-                doc.metadata["language"] = 'dockerfile'
-            # Special case: docker-compose files
-            elif 'docker-compose' in filename and (filename.endswith('.yml') or filename.endswith('.yaml')):
-                doc.metadata["language"] = 'yaml'
-            # Regular extension mapping
-            elif "." in file_path:
-                ext = "." + file_path.split(".")[-1].lower()
-                doc.metadata["language"] = EXTENSION_TO_LANGUAGE.get(ext, ext.lstrip("."))
-            else:
-                # No extension, use filename as language hint
-                doc.metadata["language"] = filename
-
-            logging.debug(f"🔤 Added language '{doc.metadata['language']}' for {file_path}")
-
-    _ensure_dump_raw_docs(repo, branch, transformed)
-
-    # 2) Determine kind
+    # delegate filtering/transform/language tagging to a service
+    transformed = PreprocessService.prepare_repo_documents(raw_docs)
+    # re-infer component kind now that we have content
     kind = "standalone" if force else (component_kind or infer_component_kind(transformed))
     is_standalone = (kind == "standalone")
 
-    # Create LLM instance for both pipelines
-    qwen_llm = QwenLLM()
+    _ensure_dump_raw_docs(repo, branch, transformed)  # keep existing debug dump
 
-    # 3) Build code nodes from individual documents FIRST
+    # ── 2) Build CHUNK (L4) nodes from code ─────────────────────────────────
     stream_step("build_code_nodes")
-    logging.info(f"🔧 Processing {len(transformed)} documents through code pipeline")
-
-    # Debug: log document details before pipeline
-    for i, doc in enumerate(transformed[:3]):
-        logging.info(f"  📄 Input Doc {i}: {doc.metadata.get('file_path', 'unknown')} - {len(doc.text)} chars")
-        logging.info(f"    Content preview: {doc.text[:100]}...")
-
-    # Apply code processing transformations directly (IngestionPipeline had issues with our custom splitter)
-    logging.info(f"🔧 Processing documents through custom code pipeline")
-    from app.pipelines.code_pipeline import DynamicCodeSplitter
-    from llama_index.core.extractors import SummaryExtractor, TitleExtractor, KeywordExtractor
-
-    # 1. Split documents into nodes using language-aware splitter
-    splitter = DynamicCodeSplitter()
-    split_nodes = splitter.get_nodes_from_documents(transformed, show_progress=False)
-    logging.info(f"🔧 Code splitter generated {len(split_nodes)} nodes")
-
-    if not split_nodes:
-        logging.error("❌ Code splitter failed to generate nodes!")
-        code_nodes = []
-    else:
-        # 2. Generate summaries for each code chunk
-        logging.info(f"🔧 Generating summaries for {len(split_nodes)} nodes")
-        try:
-            summary_extractor = SummaryExtractor(summaries=["self"], show_progress=True, llm=qwen_llm)
-            summary_metadata = summary_extractor.extract(split_nodes)
-
-            # Apply summary metadata back to nodes
-            for node, metadata in zip(split_nodes, summary_metadata):
-                node.metadata.update(metadata)
-
-            logging.info(f"✅ Summary extraction completed for {len(split_nodes)} nodes")
-        except Exception as e:
-            logging.error(f"❌ Summary extraction failed: {e}")
-
-        # 3. Extract titles/topics for each chunk
-        logging.info(f"🔧 Extracting titles for {len(split_nodes)} nodes")
-        try:
-            title_extractor = TitleExtractor(nodes=5, llm=qwen_llm)
-            title_metadata = title_extractor.extract(split_nodes)
-
-            # Apply title metadata back to nodes
-            for node, metadata in zip(split_nodes, title_metadata):
-                node.metadata.update(metadata)
-
-            logging.info(f"✅ Title extraction completed for {len(split_nodes)} nodes")
-        except Exception as e:
-            logging.error(f"❌ Title extraction failed: {e}")
-
-        # 4. Extract keywords for searchability
-        logging.info(f"🔧 Extracting keywords for {len(split_nodes)} nodes")
-        try:
-            keyword_extractor = KeywordExtractor(keywords=10, llm=qwen_llm)
-            keyword_metadata = keyword_extractor.extract(split_nodes)
-
-            # Apply keyword metadata back to nodes
-            for node, metadata in zip(split_nodes, keyword_metadata):
-                node.metadata.update(metadata)
-
-            logging.info(f"✅ Keyword extraction completed for {len(split_nodes)} nodes")
-        except Exception as e:
-            logging.error(f"❌ Keyword extraction failed: {e}")
-
-        # All metadata has been applied to the original nodes
-        code_nodes = split_nodes
-        logging.info(f"✅ Code processing completed with {len(code_nodes)} enriched nodes")
-    if not code_nodes:
-        logging.error(f"❌ Code pipeline failed - no nodes generated from {len(transformed)} documents")
-        # Log some document details for debugging
-        for i, doc in enumerate(transformed[:3]):  # First 3 docs
-            logging.error(f"  Doc {i}: {doc.metadata.get('file_path', 'unknown')} - {len(doc.text)} chars")
-        raise RuntimeError(f"No code nodes produced for repo={repo}")
-
-    # 4) Build catalog doc from code summaries → nodes
-    stream_step("build_catalog")
-    catalog_doc = make_catalog_document(
-        repo, transformed, 
-        code_nodes=code_nodes,  # Pass the processed code nodes
-        layer=layer, 
-        collection=collection, 
-        component_kind=kind,
-        llm=qwen_llm
+    code_nodes = CodePipelineService.build_code_nodes(
+        documents=transformed,
+        llm=qwen_llm,
     )
-    catalog_doc.metadata.update({"namespace": namespace, "branch": branch, "ingest_run_id": None})
-    logging.info(f"📋 Created catalog document with {len(catalog_doc.text)} characters")
-    catalog_nodes = list(build_catalog_pipeline(llm=qwen_llm).run(documents=[catalog_doc]))
-    logging.info(f"📋 Catalog pipeline produced {len(catalog_nodes)} nodes")
 
-    # Generate run_id and attach metadata to both node types
-    run_id = uuid.uuid4()
-
-    # Attach metadata to code nodes (primary content)
+    # annotate shared metadata (scope/doc_type set here for consistency)
     _attach_common_metadata(
         code_nodes,
         namespace=namespace,
@@ -266,10 +135,20 @@ def ingest_component(
         is_standalone=is_standalone,
         run_id=run_id,
         dev_forced=force,
-        doc_type="code",
+        doc_type="code",          # scope will be normalized to "chunk" by _attach_common_metadata
     )
 
-    # Attach metadata to catalog nodes (stable UUID for consistency)
+    # ── 3) Build CATALOG (L0) nodes ─────────────────────────────────────────
+    stream_step("build_catalog")
+    catalog_nodes = CatalogService.build_catalog_nodes(
+        repo=repo,
+        documents=transformed,
+        code_nodes=code_nodes,
+        layer=layer,
+        collection=collection,
+        component_kind=kind,
+        llm=qwen_llm,
+    )
     _attach_common_metadata(
         catalog_nodes,
         namespace=namespace,
@@ -280,38 +159,101 @@ def ingest_component(
         is_standalone=is_standalone,
         run_id=uuid.UUID(int=0),  # stable run_id for catalog-only nodes
         dev_forced=force,
-        doc_type="catalog",
+        doc_type="catalog",       # scope => "catalog"
     )
 
-    # 5) Write & verify
-    stream_step("write_vector_store", table=SETTINGS.embeddings_table)
-    before_total = cass.count_rows_total(session)
-    try:
-        # Create pipeline that only embeds and writes to vector store (nodes are already processed)
-        write_pipeline = IngestionPipeline(
-            transformations=[
-                HuggingFaceEmbedding(model_name=SETTINGS.embed_model),  # Use configured embedding model
-            ],
-            vector_store=vector_store,
-        )
+    # ── 4) Build FILE (L3), MODULE (L2), REPO (L1) summaries ────────────────
+    stream_step("build_file_summaries")
+    file_nodes = HierarchySummaryService.build_file_nodes(
+        code_nodes=code_nodes,
+        repo=repo,
+        namespace=namespace,
+        branch=branch,
+        component_kind=kind,
+        llm=qwen_llm,
+    )
+    _attach_common_metadata(
+        file_nodes,
+        namespace=namespace,
+        repo=repo,
+        branch=branch,
+        collection=collection,
+        component_kind=kind,
+        is_standalone=is_standalone,
+        run_id=run_id,
+        dev_forced=force,
+        doc_type="file",          # scope => "file"
+    )
 
-        # Write catalog nodes (tiny) then code nodes (big)
-        logging.info(f"📝 Writing {len(catalog_nodes)} catalog nodes to vector store")
-        write_pipeline.run(nodes=catalog_nodes, show_progress=False)
+    stream_step("build_module_summaries")
+    module_nodes = HierarchySummaryService.build_module_nodes(
+        file_nodes=file_nodes,
+        repo=repo,
+        namespace=namespace,
+        branch=branch,
+        component_kind=kind,
+        llm=qwen_llm,
+    )
+    _attach_common_metadata(
+        module_nodes,
+        namespace=namespace,
+        repo=repo,
+        branch=branch,
+        collection=collection,
+        component_kind=kind,
+        is_standalone=is_standalone,
+        run_id=run_id,
+        dev_forced=force,
+        doc_type="module",        # scope => "module"
+    )
 
-        logging.info(f"📝 Writing {len(code_nodes)} code nodes to vector store") 
-        write_pipeline.run(nodes=code_nodes, show_progress=True)
+    stream_step("build_repo_overview")
+    repo_nodes = HierarchySummaryService.build_repo_nodes(
+        transformed_docs=transformed,
+        module_nodes=module_nodes,
+        repo=repo,
+        namespace=namespace,
+        branch=branch,
+        component_kind=kind,
+        llm=qwen_llm,
+    )
+    _attach_common_metadata(
+        repo_nodes,
+        namespace=namespace,
+        repo=repo,
+        branch=branch,
+        collection=collection,
+        component_kind=kind,
+        is_standalone=is_standalone,
+        run_id=run_id,
+        dev_forced=force,
+        doc_type="repo",          # scope => "repo"
+    )
 
-    except Exception:
-        logging.exception("Cassandra write failed repo=%s ns=%s collection=%s kind=%s", repo, namespace, collection, kind)
-        raise
-    after_total = cass.count_rows_total(session)
+    # ── 5) Write per-scope to Cassandra vector tables ───────────────────────
+    stream_step("write_vector_store_multi")
+    stores = {
+        "catalog": cass.vector_store(session, table=SETTINGS.embeddings_table_catalog),
+        "repo":    cass.vector_store(session, table=SETTINGS.embeddings_table_repo),
+        "module":  cass.vector_store(session, table=SETTINGS.embeddings_table_module),
+        "file":    cass.vector_store(session, table=SETTINGS.embeddings_table_file),
+        "chunk":   cass.vector_store(session, table=SETTINGS.embeddings_table_chunk),  # legacy/current
+    }
+    embedder = HuggingFaceEmbedding(model_name=SETTINGS.embed_model)
 
-    written = after_total - before_total
-    if written <= 0:
-        raise RuntimeError(
-            f"No new rows written to {SETTINGS.cassandra_keyspace}.{SETTINGS.embeddings_table} (repo={repo}, namespace={namespace})."
-        )
+    VectorWriteService.write_nodes_per_scope(
+        embedder=embedder,
+        stores=stores,
+        catalog_nodes=catalog_nodes,
+        repo_nodes=repo_nodes,
+        module_nodes=module_nodes,
+        file_nodes=file_nodes,
+        chunk_nodes=code_nodes,
+    )
+
+    # ── 6) Done ─────────────────────────────────────────────────────────────
+    stream_event("ingest_done", {"repo": repo, "namespace": namespace, "branch": branch})
+
 
     # Audit with debugging and proper parameter handling
     try:

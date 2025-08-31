@@ -78,6 +78,8 @@ spec:
                 configMapKeyRef:
                   name: {{ .Release.Name }}-github-config
                   key: GITHUB_USER
+            - name: ALLOW_THINKING
+              value: {{ .Values.ingestjob.allowThinking | quote}}
             {{- if .Values.sharedData.enabled }}
             - name: DATA_DIR
               value: "{{ .Values.sharedData.mountPath }}"

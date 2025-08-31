@@ -19,8 +19,6 @@ COPY ingest/pyproject.toml /app/pyproject.toml
 # Copy the source package
 COPY ingest/src/ /app/src/
 
-# Optional: other files
-COPY cassandra/schema.cql /app/cassandra/schema.cql
 
 RUN pip install -e .
 
