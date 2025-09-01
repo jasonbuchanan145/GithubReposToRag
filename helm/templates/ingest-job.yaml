@@ -78,6 +78,8 @@ spec:
                 configMapKeyRef:
                   name: {{ .Release.Name }}-github-config
                   key: GITHUB_USER
+            - name: QWEN_MODEL
+              value: {{ .Values.qwen.model | quote }}
             - name: ALLOW_THINKING
               value: {{ .Values.ingestjob.allowThinking | quote}}
             {{- if .Values.sharedData.enabled }}

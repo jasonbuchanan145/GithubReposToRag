@@ -9,10 +9,7 @@ from cassandra.auth import PlainTextAuthProvider
 
 # LangChain vector store for Cassandra (CassIO-backed)
 from langchain_community.vectorstores import Cassandra as LCCassandra
-# Use the newer provider package if you prefer:
-# from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.embeddings import HuggingFaceEmbeddings  # ok too
-
+from langchain_huggingface import HuggingFaceEmbeddings
 # GraphRAG: retriever, strategy, and adapter
 from langchain_graph_retriever import GraphRetriever
 from graph_retriever.strategies import Eager, MMR

@@ -10,7 +10,7 @@ from llama_index.core.llms.callbacks import llm_completion_callback
 from llama_index.core.llms import CustomLLM, CompletionResponse, LLMMetadata
 import requests
 from llama_index.core import Settings
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+from langchain_huggingface import HuggingFaceEmbeddings
 import rag_shared.config
 from rag_shared.config import QWEN_MODEL
 
@@ -52,7 +52,7 @@ def _sanitize(text: str) -> str:
 class QwenLLM(CustomLLM):
     """Custom LLM implementation for Qwen model in ingest service (soft suppression)."""
 
-    model_name: QWEN_MODEL
+    model_name: str = QWEN_MODEL
     context_window: int = 11712
     num_output: int = 2048
 
@@ -110,7 +110,7 @@ class QwenLLM(CustomLLM):
             "model": self.model_name,
             "messages": messages,
             "max_tokens": kwargs.get("max_tokens", self.num_output),
-            "temperature": kwargs.get("temperature", 0.2 if FINAL_ONLY_INSTRUCTION else 0.7),
+            "temperature": kwargs.get("temperature", 0.5),
             "top_p": kwargs.get("top_p", 0.9),
         }
 
@@ -191,7 +191,7 @@ def initialize_llm_settings():
     try:
         logging.info(f"🔗 Qwen endpoint: {getattr(config.SETTINGS.qwen_endpoint, 'qwen_endpoint', QWEN_BASE_URL)}")
         logging.info(f"📝 Embedding model: {rag_shared.config.EMBED_MODEL}")
-        embed_model = HuggingFaceEmbedding(model_name=rag_shared.config.EMBED_MODEL)
+        embed_model = HuggingFaceEmbeddings(model_name=rag_shared.config.EMBED_MODEL)
     except Exception:
         embed_model = None
         logging.warning("Embedding model not initialized here (using existing global config).")

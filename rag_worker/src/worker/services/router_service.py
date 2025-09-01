@@ -9,7 +9,7 @@ from llama_index.core.tools import QueryEngineTool, ToolMetadata
 from llama_index.core.selectors import LLMSingleSelector
 from llama_index.core.base.base_query_engine import BaseQueryEngine
 from llama_index.core.base.response.schema import Response
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+from langchain_huggingface import HuggingFaceEmbeddings
 from llama_index.core.callbacks import CallbackManager
 from rag_shared.config import (
     ROUTER_TOP_K,
@@ -71,7 +71,7 @@ class RouterService:
     def __init__(self):
         # Initialize global LlamaIndex settings once
         Settings.llm = QwenLLM()
-        Settings.embed_model = HuggingFaceEmbedding(model_name=EMBED_MODEL)
+        Settings.embed_model = HuggingFaceEmbeddings(model_name=EMBED_MODEL)
 
         # Build per-level engines
         self._engines: Dict[str, RetrieverQueryEngine] = {}

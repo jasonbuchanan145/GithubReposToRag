@@ -6,9 +6,10 @@ from itertools import islice
 
 from langchain_core.documents import Document as LCDocument
 from langchain_community.vectorstores import Cassandra as LCCassandra
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_graph_retriever.transformers import ShreddingTransformer
 
+from rag_shared import config
 from app.config import SETTINGS  # expects: cassandra_keyspace, embed_model, embeddings_table_* names
 from app.services.cassandra_service import CassandraService  # provides .connect().session
 from llama_index.core.schema import BaseNode  # only for input typing
@@ -58,7 +59,7 @@ class VectorWriteService:
         cass = CassandraService()
         session = cass.connect().session  # uses SETTINGS for contact points/keyspace elsewhere
         keyspace = SETTINGS.cassandra_keyspace
-        emb = HuggingFaceEmbeddings(model_name=SETTINGS.embed_model)
+        emb = HuggingFaceEmbeddings(model_name=config.EMBED_MODEL)
         shredder = ShreddingTransformer()
 
         # 2) Scope -> nodes map (controller already separates these)

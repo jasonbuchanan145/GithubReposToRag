@@ -2,19 +2,18 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: cassandra-initdb
-  namespace: <YOUR_NAMESPACE>
+  namespace: rag
 data:
   00_schema.cql: |
     -- ============================================
     -- Cassandra 5 schema for GraphRAG-ready vector tables
     -- ============================================
-    CREATE KEYSPACE IF NOT EXISTS code_index
+    CREATE KEYSPACE IF NOT EXISTS vector_store
                 WITH REPLICATION = { 'class' : 'SimpleStrategy', 'replication_factor' : 1 };
 
-    USE code_index;
+    USE vector_store;
 
-    -- Set your embedding dimension here
-    -- VECTOR<FLOAT, 384>
+
 
     -- ========== CATALOG (L0) ==========
     CREATE TABLE IF NOT EXISTS embeddings_catalog (
@@ -22,7 +21,7 @@ data:
                                                       body_blob       TEXT,
                                                       vector          VECTOR<FLOAT, 384>,
                                                       attributes_blob TEXT,
-                                                      metadata_s      TEXT,
+                                                      metadata      TEXT,
 
                                                       scope           TEXT,
                                                       namespace       TEXT,
@@ -53,7 +52,7 @@ data:
                                                    body_blob       TEXT,
                                                    vector          VECTOR<FLOAT, 384>,
                                                    attributes_blob TEXT,
-                                                   metadata_s      TEXT,
+                                                   metadata      TEXT,
 
                                                    scope           TEXT,
                                                    namespace       TEXT,
@@ -82,7 +81,7 @@ data:
                                                      body_blob       TEXT,
                                                      vector          VECTOR<FLOAT, 384>,
                                                      attributes_blob TEXT,
-                                                     metadata_s      TEXT,
+                                                     metadata      TEXT,
 
                                                      scope           TEXT,
                                                      namespace       TEXT,
@@ -113,8 +112,7 @@ data:
                                                    body_blob       TEXT,
                                                    vector          VECTOR<FLOAT, 384>,
                                                    attributes_blob TEXT,
-                                                   metadata_s      TEXT,
-
+                                                   metadata         TEXT,
                                                    scope           TEXT,
                                                    namespace       TEXT,
                                                    repo            TEXT,
@@ -147,7 +145,7 @@ data:
                                               body_blob       TEXT,
                                               vector          VECTOR<FLOAT, 384>,
                                               attributes_blob TEXT,
-                                              metadata_s      TEXT,
+                                              metadata        TEXT,
 
                                               scope           TEXT,
                                               namespace       TEXT,
@@ -160,6 +158,17 @@ data:
                                               import          TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS ingest_runs (
+                                               run_id UUID PRIMARY KEY,
+                                               namespace TEXT,
+                                               repo TEXT,
+                                               branch TEXT,
+                                               collection TEXT,
+                                               component_kind TEXT,
+                                               started_at TIMESTAMP,
+                                               finished_at TIMESTAMP,
+                                               node_count INT
+    );
     CREATE CUSTOM INDEX IF NOT EXISTS embeddings_vector_idx
         ON embeddings (vector) USING 'sai'
                 WITH OPTIONS = { 'similarity_function': 'cosine' };

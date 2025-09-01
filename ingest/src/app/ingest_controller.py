@@ -10,8 +10,9 @@ from typing import Dict, List, Optional, Tuple, Union
 from cassandra.util import uuid_from_time
 from llama_index.core import Document
 # Use IngestionPipeline to write nodes directly to vector store
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+from langchain_huggingface import HuggingFaceEmbeddings
 
+import rag_shared.config
 from app.config import SETTINGS
 from app.llm_init import QwenLLM
 from app.services.cassandra_service import CassandraService
@@ -95,6 +96,7 @@ def ingest_component(
 
     gh   = GithubService()
     cass = CassandraService()
+    cass.connect()
     qwen_llm = QwenLLM()
 
     handles = cass.connect()
@@ -237,9 +239,9 @@ def ingest_component(
         "repo":    cass.vector_store(session, table=SETTINGS.embeddings_table_repo),
         "module":  cass.vector_store(session, table=SETTINGS.embeddings_table_module),
         "file":    cass.vector_store(session, table=SETTINGS.embeddings_table_file),
-        "chunk":   cass.vector_store(session, table=SETTINGS.embeddings_table_chunk),  # legacy/current
+        "chunk":   cass.vector_store(session, table=SETTINGS.embeddings_table_chunk),
     }
-    embedder = HuggingFaceEmbedding(model_name=SETTINGS.embed_model)
+    embedder = HuggingFaceEmbeddings(model_name=rag_shared.config.EMBED_MODEL)
 
     VectorWriteService.write_nodes_per_scope(
         embedder=embedder,
@@ -324,7 +326,6 @@ def ingest_component(
         "component_kind": kind,
         "branch": branch,
         "nodes_written": len(code_nodes),
-        "table_rows_added": int(written),
         "is_standalone": is_standalone,
         "dev_forced_standalone": force,
     }
