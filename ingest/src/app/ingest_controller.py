@@ -12,6 +12,17 @@ from llama_index.core import Document
 # Use IngestionPipeline to write nodes directly to vector store
 from langchain_huggingface import HuggingFaceEmbeddings
 
+from prometheus_client import (
+    CollectorRegistry,
+    Counter,
+    Gauge,
+    Histogram,
+    push_to_gateway,
+    delete_from_gateway,
+)
+import os
+import time
+
 import rag_shared.config
 from app.config import SETTINGS
 from app.llm_init import QwenLLM
@@ -26,7 +37,56 @@ from app.services.transform_service import (
 )
 from app.services.vector_write_service import VectorWriteService
 from app.streaming import stream_event, stream_step
+REGISTRY = CollectorRegistry()
+INGEST_STAGE_RUN_SECONDS = Gauge(
+    "ingest_stage_run_seconds",
+    "Duration (seconds) of a single ingest stage for a single run",
+    ["level", "repo", "namespace", "branch", "run_id"],
+    registry=REGISTRY,
+)
 
+INGEST_RUN_SECONDS = Gauge(
+    "ingest_run_seconds",
+    "Total duration (seconds) of a single ingest run",
+    ["repo", "namespace", "branch", "run_id"],
+    registry=REGISTRY,
+)
+def _push_metrics(job: str, grouping_key: dict) -> None:
+    addr = os.getenv("PUSHGATEWAY_ADDRESS", "pushgateway:9091")
+    push_to_gateway(addr, job=job, registry=REGISTRY, grouping_key=grouping_key)
+
+class stage_timer:
+    """Times a stage, sets a Gauge for this run, and pushes immediately on exit."""
+    def __init__(self, level: str, *, repo: str, namespace: str, branch: str, run_id: str,
+                 job: str = "ingest_component"):
+        self.level, self.repo, self.namespace, self.branch, self.run_id = level, repo, namespace, branch, run_id
+        self.job = job
+        self.grouping_key = {
+            "run_id": run_id,
+            "repo": repo,
+            "namespace": namespace,
+            "branch": branch,
+        }
+        self._t0 = None
+
+    def __enter__(self):
+        self._t0 = time.perf_counter()
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        elapsed = time.perf_counter() - self._t0
+        INGEST_STAGE_RUN_SECONDS.labels(
+            level=self.level,
+            repo=self.repo,
+            namespace=self.namespace,
+            branch=self.branch,
+            run_id=self.run_id,
+        ).set(elapsed)
+
+        try:
+            _push_metrics(self.job, self.grouping_key)
+        except Exception as e:
+            logging.warning(f"⚠️ Failed to push metrics for stage {self.level}: {e}")
 
 def _ensure_dump_raw_docs(repo: str, branch: str, docs: List[Document]) -> None:
     if not SETTINGS.data_dir:
@@ -86,7 +146,8 @@ def ingest_component(
       - HierarchySummaryService.build_file_nodes / build_module_nodes / build_repo_nodes
       - VectorWriteService.write_nodes_per_scope
     """
-
+    _run_t0 = time.perf_counter()
+    job_name = "ingest_component"
     # ── config & services ───────────────────────────────────────────────────
     branch = branch or SETTINGS.default_branch
     collection = collection or SETTINGS.default_collection
@@ -107,216 +168,234 @@ def ingest_component(
     run_id = uuid.uuid4()
 
     # ── 1) Load & normalize docs ────────────────────────────────────────────
-    stream_step("load_docs", repo=repo, branch=branch)
-    raw_docs = gh.load_repo_documents(repo, branch)
-    stream_step("preprocess_docs", repo=repo, branch=branch)
+    with stage_timer("preprocess", repo=repo, namespace=namespace, branch=branch, run_id=str(run_id)):
+        stream_step("load_docs", repo=repo, branch=branch)
+        raw_docs = gh.load_repo_documents(repo, branch)
+        stream_step("preprocess_docs", repo=repo, branch=branch)
 
-    # delegate filtering/transform/language tagging to a service
-    transformed = PreprocessService.prepare_repo_documents(raw_docs)
-    # re-infer component kind now that we have content
-    kind = "standalone" if force else (component_kind or infer_component_kind(transformed))
-    is_standalone = (kind == "standalone")
+        # delegate filtering/transform/language tagging to a service
+        transformed = PreprocessService.prepare_repo_documents(raw_docs)
+        # re-infer component kind now that we have content
+        kind = "standalone" if force else (component_kind or infer_component_kind(transformed))
+        is_standalone = (kind == "standalone")
 
-    _ensure_dump_raw_docs(repo, branch, transformed)  # keep existing debug dump
+        _ensure_dump_raw_docs(repo, branch, transformed)  # keep existing debug dump
 
     # ── 2) Build CHUNK (L4) nodes from code ─────────────────────────────────
-    stream_step("build_code_nodes")
-    code_nodes = CodePipelineService.build_code_nodes(
-        documents=transformed,
-        llm=qwen_llm,
-    )
+    with stage_timer("code_nodes", repo=repo, namespace=namespace, branch=branch, run_id=str(run_id)):
+        stream_step("build_code_nodes")
+        code_nodes = CodePipelineService.build_code_nodes(
+            documents=transformed,
+            llm=qwen_llm,
+        )
 
-    # annotate shared metadata (scope/doc_type set here for consistency)
-    _attach_common_metadata(
-        code_nodes,
-        namespace=namespace,
-        repo=repo,
-        branch=branch,
-        collection=collection,
-        component_kind=kind,
-        is_standalone=is_standalone,
-        run_id=run_id,
-        dev_forced=force,
-        doc_type="code",          # scope will be normalized to "chunk" by _attach_common_metadata
-    )
+        # annotate shared metadata (scope/doc_type set here for consistency)
+        _attach_common_metadata(
+            code_nodes,
+            namespace=namespace,
+            repo=repo,
+            branch=branch,
+            collection=collection,
+            component_kind=kind,
+            is_standalone=is_standalone,
+            run_id=run_id,
+            dev_forced=force,
+            doc_type="code",          # scope will be normalized to "chunk" by _attach_common_metadata
+        )
 
     # ── 3) Build CATALOG (L0) nodes ─────────────────────────────────────────
-    stream_step("build_catalog")
-    catalog_nodes = CatalogService.build_catalog_nodes(
-        repo=repo,
-        documents=transformed,
-        code_nodes=code_nodes,
-        layer=layer,
-        collection=collection,
-        component_kind=kind,
-        llm=qwen_llm,
-    )
-    _attach_common_metadata(
-        catalog_nodes,
-        namespace=namespace,
-        repo=repo,
-        branch=branch,
-        collection=collection,
-        component_kind=kind,
-        is_standalone=is_standalone,
-        run_id=uuid.UUID(int=0),  # stable run_id for catalog-only nodes
-        dev_forced=force,
-        doc_type="catalog",       # scope => "catalog"
-    )
+    with stage_timer("catalog", repo=repo, namespace=namespace, branch=branch, run_id=str(run_id)):
+        stream_step("build_catalog")
+        catalog_nodes = CatalogService.build_catalog_nodes(
+            repo=repo,
+            documents=transformed,
+            code_nodes=code_nodes,
+            layer=layer,
+            collection=collection,
+            component_kind=kind,
+            llm=qwen_llm,
+        )
+        _attach_common_metadata(
+            catalog_nodes,
+            namespace=namespace,
+            repo=repo,
+            branch=branch,
+            collection=collection,
+            component_kind=kind,
+            is_standalone=is_standalone,
+            run_id=uuid.UUID(int=0),  # stable run_id for catalog-only nodes
+            dev_forced=force,
+            doc_type="catalog",       # scope => "catalog"
+        )
 
     # ── 4) Build FILE (L3), MODULE (L2), REPO (L1) summaries ────────────────
-    stream_step("build_file_summaries")
-    file_nodes = HierarchySummaryService.build_file_nodes(
-        code_nodes=code_nodes,
-        repo=repo,
-        namespace=namespace,
-        branch=branch,
-        component_kind=kind,
-        llm=qwen_llm,
-    )
-    _attach_common_metadata(
-        file_nodes,
-        namespace=namespace,
-        repo=repo,
-        branch=branch,
-        collection=collection,
-        component_kind=kind,
-        is_standalone=is_standalone,
-        run_id=run_id,
-        dev_forced=force,
-        doc_type="file",          # scope => "file"
-    )
+    with stage_timer("file_summaries", repo=repo, namespace=namespace, branch=branch, run_id=str(run_id)):
+        stream_step("build_file_summaries")
+        file_nodes = HierarchySummaryService.build_file_nodes(
+            code_nodes=code_nodes,
+            repo=repo,
+            namespace=namespace,
+            branch=branch,
+            component_kind=kind,
+            llm=qwen_llm,
+        )
+        _attach_common_metadata(
+            file_nodes,
+            namespace=namespace,
+            repo=repo,
+            branch=branch,
+            collection=collection,
+            component_kind=kind,
+            is_standalone=is_standalone,
+            run_id=run_id,
+            dev_forced=force,
+            doc_type="file",          # scope => "file"
+        )
 
-    stream_step("build_module_summaries")
-    module_nodes = HierarchySummaryService.build_module_nodes(
-        file_nodes=file_nodes,
-        repo=repo,
-        namespace=namespace,
-        branch=branch,
-        component_kind=kind,
-        llm=qwen_llm,
-    )
-    _attach_common_metadata(
-        module_nodes,
-        namespace=namespace,
-        repo=repo,
-        branch=branch,
-        collection=collection,
-        component_kind=kind,
-        is_standalone=is_standalone,
-        run_id=run_id,
-        dev_forced=force,
-        doc_type="module",        # scope => "module"
-    )
 
-    stream_step("build_repo_overview")
-    repo_nodes = HierarchySummaryService.build_repo_nodes(
-        transformed_docs=transformed,
-        module_nodes=module_nodes,
-        repo=repo,
-        namespace=namespace,
-        branch=branch,
-        component_kind=kind,
-        llm=qwen_llm,
-    )
-    _attach_common_metadata(
-        repo_nodes,
-        namespace=namespace,
-        repo=repo,
-        branch=branch,
-        collection=collection,
-        component_kind=kind,
-        is_standalone=is_standalone,
-        run_id=run_id,
-        dev_forced=force,
-        doc_type="repo",          # scope => "repo"
-    )
+    with stage_timer("module_summaries", repo=repo, namespace=namespace, branch=branch, run_id=str(run_id)):
+        stream_step("build_module_summaries")
+        module_nodes = HierarchySummaryService.build_module_nodes(
+                file_nodes=file_nodes,
+                repo=repo,
+                namespace=namespace,
+                branch=branch,
+                component_kind=kind,
+                llm=qwen_llm,
+            )
+        _attach_common_metadata(
+                module_nodes,
+                namespace=namespace,
+                repo=repo,
+                branch=branch,
+                collection=collection,
+                component_kind=kind,
+                is_standalone=is_standalone,
+                run_id=run_id,
+                dev_forced=force,
+                doc_type="module",        # scope => "module"
+            )
+    with stage_timer("repo_summaries", repo=repo, namespace=namespace, branch=branch, run_id=str(run_id)):
+        stream_step("build_repo_overview")
+        repo_nodes = HierarchySummaryService.build_repo_nodes(
+            transformed_docs=transformed,
+            module_nodes=module_nodes,
+            repo=repo,
+            namespace=namespace,
+            branch=branch,
+            component_kind=kind,
+            llm=qwen_llm,
+        )
+        _attach_common_metadata(
+            repo_nodes,
+            namespace=namespace,
+            repo=repo,
+            branch=branch,
+            collection=collection,
+            component_kind=kind,
+            is_standalone=is_standalone,
+            run_id=run_id,
+            dev_forced=force,
+            doc_type="repo",          # scope => "repo"
+        )
 
     # ── 5) Write per-scope to Cassandra vector tables ───────────────────────
-    stream_step("write_vector_store_multi")
-    stores = {
-        "catalog": cass.vector_store(session, table=SETTINGS.embeddings_table_catalog),
-        "repo":    cass.vector_store(session, table=SETTINGS.embeddings_table_repo),
-        "module":  cass.vector_store(session, table=SETTINGS.embeddings_table_module),
-        "file":    cass.vector_store(session, table=SETTINGS.embeddings_table_file),
-        "chunk":   cass.vector_store(session, table=SETTINGS.embeddings_table_chunk),
-    }
-    embedder = HuggingFaceEmbeddings(model_name=rag_shared.config.EMBED_MODEL)
-
-    VectorWriteService.write_nodes_per_scope(
-        embedder=embedder,
-        stores=stores,
-        catalog_nodes=catalog_nodes,
-        repo_nodes=repo_nodes,
-        module_nodes=module_nodes,
-        file_nodes=file_nodes,
-        chunk_nodes=code_nodes,
-    )
-
-    # ── 6) Done ─────────────────────────────────────────────────────────────
-    stream_event("ingest_done", {"repo": repo, "namespace": namespace, "branch": branch})
-
-
-    # Audit with debugging and proper parameter handling
-    try:
-        # Debug logging to identify the problematic parameter
-        logging.info(f"🔍 Audit parameters debug:")
-        logging.info(f"  run_id: {run_id} (type: {type(run_id)})")
-        logging.info(f"  namespace: '{namespace}' (type: {type(namespace)})")
-        logging.info(f"  repo: '{repo}' (type: {type(repo)})")
-        logging.info(f"  branch: '{branch}' (type: {type(branch)})")
-        logging.info(f"  collection: '{collection}' (type: {type(collection)})")
-        logging.info(f"  kind: '{kind}' (type: {type(kind)})")
-        logging.info(f"  node_count: {len(code_nodes)} (type: {type(len(code_nodes))})")
-
-        # Prepare parameters with proper types for Cassandra
-        current_time = datetime.utcnow()
-        audit_params = {
-            'run_id': run_id,  # Keep as UUID object for Cassandra
-            'namespace': str(namespace) if namespace else "",
-            'repo': str(repo) if repo else "",
-            'branch': str(branch) if branch else "",
-            'collection': str(collection) if collection else "",
-            'component_kind': str(kind) if kind else "",
-            'started_at': current_time,
-            'finished_at': current_time,
-            'node_count': int(len(code_nodes))
+    with stage_timer("vector_write", repo=repo, namespace=namespace, branch=branch, run_id=str(run_id)):
+        stream_step("write_vector_store_multi")
+        stores = {
+            "catalog": cass.vector_store(session, table=SETTINGS.embeddings_table_catalog),
+            "repo":    cass.vector_store(session, table=SETTINGS.embeddings_table_repo),
+            "module":  cass.vector_store(session, table=SETTINGS.embeddings_table_module),
+            "file":    cass.vector_store(session, table=SETTINGS.embeddings_table_file),
+            "chunk":   cass.vector_store(session, table=SETTINGS.embeddings_table_chunk),
         }
+        embedder = HuggingFaceEmbeddings(model_name=rag_shared.config.EMBED_MODEL)
 
-        session.execute(
-            """
-            INSERT INTO ingest_runs (run_id, namespace, repo, branch, collection, component_kind, started_at, finished_at, node_count) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            [
-                audit_params['run_id'],
-                audit_params['namespace'], 
-                audit_params['repo'],
-                audit_params['branch'],
-                audit_params['collection'],
-                audit_params['component_kind'],
-                audit_params['started_at'],
-                audit_params['finished_at'],
-                audit_params['node_count']
-            ]
+        VectorWriteService.write_nodes_per_scope(
+            embedder=embedder,
+            stores=stores,
+            catalog_nodes=catalog_nodes,
+            repo_nodes=repo_nodes,
+            module_nodes=module_nodes,
+            file_nodes=file_nodes,
+            chunk_nodes=code_nodes,
         )
-        logging.info("✅ Audit record inserted successfully")
 
-    except Exception as audit_error:
-        logging.error(f"❌ Failed to insert audit record: {audit_error}")
-        logging.error(f"Parameters were: {audit_params}")
-        # Continue execution - don't let audit failure stop the ingestion
-        logging.warning("⚠️ Continuing without audit record")
+        # ── 6) Done ─────────────────────────────────────────────────────────────
+        stream_event("ingest_done", {"repo": repo, "namespace": namespace, "branch": branch})
 
-    # 6) Close
-    try:
-        session.shutdown()
-        handles.cluster.shutdown()
-    except Exception:
-        pass
+    with stage_timer("audit_and_clean", repo=repo, namespace=namespace, branch=branch, run_id=str(run_id)):
+        # Audit with debugging and proper parameter handling
+        audit_params ={}
+        try:
+            # Debug logging to identify the problematic parameter
+            logging.info(f"🔍 Audit parameters debug:")
+            logging.info(f"  run_id: {run_id} (type: {type(run_id)})")
+            logging.info(f"  namespace: '{namespace}' (type: {type(namespace)})")
+            logging.info(f"  repo: '{repo}' (type: {type(repo)})")
+            logging.info(f"  branch: '{branch}' (type: {type(branch)})")
+            logging.info(f"  collection: '{collection}' (type: {type(collection)})")
+            logging.info(f"  kind: '{kind}' (type: {type(kind)})")
+            logging.info(f"  node_count: {len(code_nodes)} (type: {type(len(code_nodes))})")
 
-    stream_event("ingest_done", {"repo": repo, "namespace": namespace, "written": int(written), "nodes": len(code_nodes)})
+            # Prepare parameters with proper types for Cassandra
+            current_time = datetime.utcnow()
+            audit_params = {
+                'run_id': run_id,  # Keep as UUID object for Cassandra
+                'namespace': str(namespace) if namespace else "",
+                'repo': str(repo) if repo else "",
+                'branch': str(branch) if branch else "",
+                'collection': str(collection) if collection else "",
+                'component_kind': str(kind) if kind else "",
+                'started_at': current_time,
+                'finished_at': current_time,
+                'node_count': int(len(code_nodes))
+            }
 
+            session.execute(
+                """
+                INSERT INTO ingest_runs (run_id, namespace, repo, branch, collection, component_kind, started_at, finished_at, node_count) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    audit_params['run_id'],
+                    audit_params['namespace'],
+                    audit_params['repo'],
+                    audit_params['branch'],
+                    audit_params['collection'],
+                    audit_params['component_kind'],
+                    audit_params['started_at'],
+                    audit_params['finished_at'],
+                    audit_params['node_count']
+                ]
+            )
+            logging.info("✅ Audit record inserted successfully")
+
+        except Exception as audit_error:
+            logging.error(f"❌ Failed to insert audit record: {audit_error}")
+            logging.error(f"Parameters were: {audit_params}")
+            # Continue execution - don't let audit failure stop the ingestion
+            logging.warning("⚠️ Continuing without audit record")
+
+        # 6) Close
+        try:
+            session.shutdown()
+            handles.cluster.shutdown()
+        except Exception:
+            pass
+
+    stream_event("ingest_done", {"repo": repo, "namespace": namespace, "nodes": len(code_nodes)})
+    total_elapsed = time.perf_counter() - _run_t0
+    grouping_key = {
+        "run_id": str(run_id),
+        "repo": repo,
+        "namespace": namespace,
+        "branch": branch or SETTINGS.default_branch,
+    }
+    INGEST_RUN_SECONDS.labels(
+        repo=repo, namespace=namespace, branch=branch, run_id=str(run_id)
+    ).set(total_elapsed)
+    _push_metrics(job_name, grouping_key)
     return {
         "ok": True,
         "run_id": str(run_id),
