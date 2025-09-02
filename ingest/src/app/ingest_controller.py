@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import json
 import logging
+import urllib.request
+import traceback
 import uuid
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Union
+from urllib.error import HTTPError
+import math
 
 # Convert UUID to proper format for Cassandra
 from cassandra.util import uuid_from_time
@@ -51,12 +55,63 @@ INGEST_RUN_SECONDS = Gauge(
     ["repo", "namespace", "branch", "run_id"],
     registry=REGISTRY,
 )
-def _push_metrics(job: str, grouping_key: dict) -> None:
+
+from prometheus_client import CollectorRegistry, Gauge, push_to_gateway, delete_from_gateway
+import urllib.request
+from urllib.error import HTTPError
+import logging, traceback
+
+def _debug_push_handler(url, method, timeout, headers, data):
+    if isinstance(headers, list):
+        headers = dict(headers)
+
+    def do_request():
+        req = urllib.request.Request(url, data=data, headers=headers, method=method)
+        try:
+            return urllib.request.urlopen(req, timeout=timeout)
+        except HTTPError as e:
+            body = e.read().decode("utf-8", "ignore")
+            logging.error("Pushgateway %s %s failed: HTTP %s\n%s", method, url, e.code, body)
+            raise
+        except Exception:
+            logging.error("Pushgateway %s %s failed (non-HTTP error):\n%s",
+                          method, url, traceback.format_exc())
+            raise
+    return do_request
+
+def _push_gauge_sample(*, job: str, grouping_key: dict, metric_name: str, help_text: str,
+                       labels: dict, value: float):
+    """
+    Build a one-off registry containing exactly one Gauge sample and push it.
+    """
+    # 1-registry, 1-metric, 1-sample
+    reg = CollectorRegistry()
+    g = Gauge(metric_name, help_text, list(labels.keys()), registry=reg)
+    g.labels(**labels).set(value)
+
     addr = os.getenv("PUSHGATEWAY_ADDRESS", "pushgateway:9091")
-    push_to_gateway(addr, job=job, registry=REGISTRY, grouping_key=grouping_key)
+    push_to_gateway(
+        addr,
+        job=job,
+        registry=reg,
+        grouping_key={k: str(v) for k, v in grouping_key.items()},
+        handler=_debug_push_handler,
+    )
+
+
+def _push_metrics(job: str, grouping_key: dict) -> None:
+    grouping_key = {k: str(v) for k, v in grouping_key.items()}
+
+    addr = os.getenv("PUSHGATEWAY_ADDRESS", "pushgateway:9091")
+    push_to_gateway(
+        addr,
+        job=job,
+        registry=REGISTRY,
+        grouping_key=grouping_key,
+        handler=_debug_push_handler,
+    )
 
 class stage_timer:
-    """Times a stage, sets a Gauge for this run, and pushes immediately on exit."""
     def __init__(self, level: str, *, repo: str, namespace: str, branch: str, run_id: str,
                  job: str = "ingest_component"):
         self.level, self.repo, self.namespace, self.branch, self.run_id = level, repo, namespace, branch, run_id
@@ -75,18 +130,26 @@ class stage_timer:
 
     def __exit__(self, exc_type, exc, tb):
         elapsed = time.perf_counter() - self._t0
-        INGEST_STAGE_RUN_SECONDS.labels(
-            level=self.level,
-            repo=self.repo,
-            namespace=self.namespace,
-            branch=self.branch,
-            run_id=self.run_id,
-        ).set(elapsed)
-
+        if not (elapsed >= 0 and math.isfinite(elapsed)):
+            logging.warning("Skipping push: non-finite elapsed=%r for %s", elapsed, self.level)
+            return
         try:
-            _push_metrics(self.job, self.grouping_key)
-        except Exception as e:
-            logging.warning(f"⚠️ Failed to push metrics for stage {self.level}: {e}")
+            _push_gauge_sample(
+                job=self.job,
+                grouping_key=self.grouping_key,
+                metric_name="ingest_stage_run_seconds",
+                help_text="Duration (seconds) of a single ingest stage for a single run",
+                labels={
+                    "level": self.level,
+                    "repo": self.repo,
+                    "namespace": self.namespace,
+                    "branch": self.branch,
+                    "run_id": self.run_id,
+                },
+                value=elapsed,
+            )
+        except Exception:
+            logging.exception(f"⚠️ Failed to push metrics for stage {self.level}")
 
 def _ensure_dump_raw_docs(repo: str, branch: str, docs: List[Document]) -> None:
     if not SETTINGS.data_dir:
@@ -386,17 +449,30 @@ def ingest_component(
             pass
 
     stream_event("ingest_done", {"repo": repo, "namespace": namespace, "nodes": len(code_nodes)})
-    total_elapsed = time.perf_counter() - _run_t0
     grouping_key = {
         "run_id": str(run_id),
         "repo": repo,
         "namespace": namespace,
         "branch": branch or SETTINGS.default_branch,
     }
-    INGEST_RUN_SECONDS.labels(
-        repo=repo, namespace=namespace, branch=branch, run_id=str(run_id)
-    ).set(total_elapsed)
-    _push_metrics(job_name, grouping_key)
+    total_elapsed = time.perf_counter() - _run_t0
+    try:
+        _push_gauge_sample(
+            job=job_name,
+            grouping_key=grouping_key,
+            metric_name="ingest_run_seconds",
+            help_text="Total duration (seconds) of a single ingest run",
+            labels={
+                "repo": repo,
+                "namespace": namespace,
+                "branch": branch,
+                "run_id": str(run_id),
+            },
+            value=total_elapsed,
+        )
+    except Exception:
+        logging.exception("⚠️ Failed to push total run duration")
+
     return {
         "ok": True,
         "run_id": str(run_id),

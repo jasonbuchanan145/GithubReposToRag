@@ -128,14 +128,17 @@ imagePullSecrets: []
 # This is to override the chart name.
 nameOverride: ""
 fullnameOverride: ""
-
-# Prometheus chart values (minimal)
+metrics:
+  prometheus_gateway:
+    host: rag-demo-prometheus-pushgateway
+    port: 9091
+# Prometheus chart values
 prometheus:
   enabled: true
   alertmanager:
     enabled: false
   pushgateway:
-    enabled: false
+    enabled: true
   server:
     # Use NodePort=false (ClusterIP); we access via kubectl port-forward if needed
     service:
