@@ -171,6 +171,7 @@ class GraphRetrieverFactory:
             keyspace=self.cfg.conn.keyspace,
             table_name=table_name,
             metadata_indexing=("allow", list(allow_fields)),
+
         )
 
     def _mk(self, level: str, strategy) -> GraphRetriever:

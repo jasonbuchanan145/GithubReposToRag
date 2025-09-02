@@ -5,7 +5,6 @@ import os
 import re
 from typing import Any
 
-# Fix the import - use the correct module path
 from llama_index.core.llms.callbacks import llm_completion_callback
 from llama_index.core.llms import CustomLLM, CompletionResponse, LLMMetadata
 import requests
@@ -150,7 +149,7 @@ class QwenLLM(CustomLLM):
             "model": self.model_name,
             "prompt": self._maybe_inject_instruction(prompt),
             "max_tokens": kwargs.get("max_tokens", self.num_output),
-            "temperature": kwargs.get("temperature", 0.2 if FINAL_ONLY_INSTRUCTION else 0.7),
+            "temperature": kwargs.get("temperature", 0.2),
             "top_p": kwargs.get("top_p", 0.9),
         }
 

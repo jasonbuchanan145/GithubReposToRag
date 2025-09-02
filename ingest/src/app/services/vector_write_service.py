@@ -4,6 +4,7 @@ import logging
 from typing import Dict, Any, List, Optional, Iterable, Tuple
 from itertools import islice
 
+from langchain_community.utilities.cassandra import SetupMode
 from langchain_core.documents import Document as LCDocument
 from langchain_community.vectorstores import Cassandra as LCCassandra
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -17,11 +18,10 @@ from llama_index.core.schema import BaseNode  # only for input typing
 
 class VectorWriteService:
     """
-    Drop-in replacement that:
+    Write service that
       - converts LlamaIndex Nodes -> LangChain Documents
       - shreds list metadata (topics/imports/labels) for GraphRAG traversal
       - writes to Cassandra 5 via LangChain's vector store (CassIO backend)
-    NOTE: The 'stores' argument from the controller is ignored (it contained LlamaIndex stores).
     """
 
     # Keep traversal-focused allow-lists small for faster SAI indexes
@@ -41,6 +41,61 @@ class VectorWriteService:
         "file":    getattr(SETTINGS, "embeddings_table_file",    "embeddings_file"),
         "chunk":   getattr(SETTINGS, "embeddings_table_chunk",   "embeddings"),  # legacy/current
     }
+    @staticmethod
+    def _sanitize_doc_metadata(doc: LCDocument, allowed_keys: set[str]) -> LCDocument:
+        """
+        Ensure metadata fits Cassandra's MAP<TEXT,TEXT> and the allow-list:
+          - Keep only allowed keys (+ a tiny always-keep set)
+          - Convert ALL values to strings
+          - Flatten lists (comma-join)
+          - JSON-encode dicts/tuples/sets
+          - Drop None values
+          - Ensure keys are strings
+        """
+        import json
+        from copy import deepcopy
+
+        keep_always = {
+            "scope", "namespace", "repo", "module", "file_path",
+            "symbol", "owner", "component_kind", "branch", "language",
+            # row_id is not usually in metadata, but keep if present
+            "row_id"
+        }
+        keep = set(allowed_keys) | keep_always
+
+        md_in = deepcopy(doc.metadata or {})
+
+        def to_text(v):
+            if v is None:
+                return None
+            if isinstance(v, str):
+                return v
+            if isinstance(v, (int, float, bool)):
+                return str(v)
+            if isinstance(v, (list, tuple, set)):
+                # ShreddingTransformer should already explode lists;
+                # but if any remains, join as comma-separated text
+                try:
+                    return ",".join(map(str, v))
+                except Exception:
+                    return json.dumps(list(v), ensure_ascii=False, separators=(",", ":"))
+            # dict or other complex → JSON
+            try:
+                return json.dumps(v, ensure_ascii=False, separators=(",", ":"))
+            except Exception:
+                return str(v)
+
+        md_out = {}
+        for k, v in md_in.items():
+            ks = str(k)  # enforce TEXT key
+            if ks not in keep:
+                continue
+            vs = to_text(v)
+            if vs is not None:
+                md_out[ks] = vs
+
+        # Return a *new* Document so we don't accidentally retain old metadata
+        return LCDocument(page_content=doc.page_content, metadata=md_out)
 
     @staticmethod
     def write_nodes_per_scope(
@@ -78,12 +133,12 @@ class VectorWriteService:
             table = VectorWriteService._TABLE_BY_SCOPE[scope]
             allow_fields = tuple(VectorWriteService._ALLOW_FIELDS_BY_SCOPE[scope])
 
-            # Create (or reuse) the LC Cassandra vector store for this scope
             store = LCCassandra(
                 embedding=emb,
                 session=session,
                 keyspace=keyspace,
                 table_name=table,
+                setup_mode=SetupMode.OFF,
                 # index only the fields we traverse on; keeps SAI indexes tight
                 metadata_indexing=("allow", list(allow_fields)),
             )
@@ -96,7 +151,10 @@ class VectorWriteService:
 
             # Shred list metadata so edges over lists are traversable by GraphRAG
             docs = shredder.transform_documents(docs)
-
+            docs = [VectorWriteService._sanitize_doc_metadata(d, allowed_keys=set(allow_fields)) for d in docs]
+            for d in docs:
+                bad = {k: type(v).__name__ for k,v in d.metadata.items() if not isinstance(v, str)}
+                assert not bad, f"Still non-strings: {bad}"
             for batch_docs, batch_ids in _batched(docs, ids, batch_size=batch_size):
                 store.add_documents(batch_docs, ids=batch_ids)
 

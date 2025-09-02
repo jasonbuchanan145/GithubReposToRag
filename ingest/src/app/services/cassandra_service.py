@@ -9,6 +9,7 @@ from cassandra.auth import PlainTextAuthProvider
 from cassandra.cluster import Cluster, Session
 
 import cassio
+from langchain_community.utilities.cassandra import SetupMode
 from langchain_community.vectorstores import Cassandra as LcCassandra
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
@@ -193,7 +194,8 @@ class CassandraService:
             embedding=self._embeddings,
             session=sess,
             keyspace=self._settings.cassandra_keyspace,
-            table_name=table
+            table_name=table,
+            setup_mode=SetupMode.OFF
         )
         return CassandraVectorStoreAdapter(lc)
 

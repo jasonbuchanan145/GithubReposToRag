@@ -136,6 +136,7 @@ def ingest_component(
         component_kind: Optional[str] = None,
         dev_force_standalone: Optional[bool] = None,
 ) -> Dict[str, Union[str, int, bool]]:
+
     """
     Controller: ingest one component/repo into hierarchical RAG (catalog, repo, module, file, chunk).
 
