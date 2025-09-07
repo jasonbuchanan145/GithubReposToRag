@@ -66,7 +66,7 @@ spec:
             - |
               echo "⏳ waiting for Redis ..."
               for i in $(seq 1 30); do
-                if nc -z -w 5 redis-master 6379; then
+                if nc -z -w 5 rag-demo-redis-master 6379; then
                   echo "✅ Redis is reachable"
                   exit 0
                 fi
@@ -87,6 +87,8 @@ spec:
               value: "{{ .Release.Name }}-cassandra"
             - name: CASSANDRA_PORT
               value: "9042"
+            - name: QWEN_MODEL
+              value: {{ .Values.qwen.model | quote }}
             - name: CASSANDRA_USERNAME
               value: "{{ .Values.cassandra.auth.username }}"
             - name: CASSANDRA_PASSWORD
@@ -94,7 +96,7 @@ spec:
             - name: CASSANDRA_KEYSPACE
               value: "vector_store"
             - name: REDIS_URL
-              value: "redis://:{{ .Values.redis.auth.password }}@redis-master:6379/0"
+              value: "redis://:{{ .Values.redis.auth.password }}@rag-demo-redis-master:6379/0"
             - name: SSE_PING_SECONDS
               value: "15"
             - name: MAX_RAG_ATTEMPTS

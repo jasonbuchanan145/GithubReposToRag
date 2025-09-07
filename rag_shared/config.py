@@ -1,6 +1,6 @@
 import os
 
-REDIS_URL = os.getenv("REDIS_URL", "redis://redis-master:6379/0")
+REDIS_URL = os.getenv("REDIS_URL", "redis://rag-demo-redis-master:6379/0")
 SSE_PING_SECONDS = int(os.getenv("SSE_PING_SECONDS", "15"))
 
 MAX_RAG_ATTEMPTS = int(os.getenv("MAX_RAG_ATTEMPTS", "3"))
@@ -9,7 +9,7 @@ MIN_SOURCE_NODES = int(os.getenv("MIN_SOURCE_NODES", "1"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
 # Cassandra
-CASSANDRA_HOST = os.getenv("CASSANDRA_HOST", "rag-demo-cassandra")
+CASSANDRA_HOST = [os.getenv("CASSANDRA_HOST", "rag-demo-cassandra")]
 CASSANDRA_PORT = int(os.getenv("CASSANDRA_PORT", "9042"))
 CASSANDRA_USERNAME = os.getenv("CASSANDRA_USERNAME", "cassandra")
 CASSANDRA_PASSWORD = os.getenv("CASSANDRA_PASSWORD", "testyMcTesterson")
@@ -42,3 +42,6 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://redis-master:6379/0")
 SSE_PING_SECONDS = int(os.getenv("SSE_PING_SECONDS", "15"))
 MAX_RAG_ATTEMPTS  = int(os.getenv("MAX_RAG_ATTEMPTS", "3"))
 MIN_SOURCE_NODES  = int(os.getenv("MIN_SOURCE_NODES", "1"))
+
+DEFAULT_NAMESPACE = os.getenv("DEFAULT_NAMESPACE", "default")
+METRICS_PORT = os.getenv("METRICS_PORT", "9000")

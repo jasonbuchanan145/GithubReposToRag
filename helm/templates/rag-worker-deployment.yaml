@@ -20,7 +20,7 @@ spec:
             - |
               echo "⏳ waiting for Redis ..."
               for i in $(seq 1 30); do
-                if nc -z -w 5 redis-master 6379; then
+                if nc -z -w 5 rag-demo-redis-master 6379; then
                   echo "✅ Redis is reachable"
                   exit 0
                 fi
@@ -65,7 +65,7 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
             - name: REDIS_URL
-              value: "redis://:changeme@redis-master:6379/0"
+              value: "redis://:changeme@rag-demo-redis-master:6379/0"
             - name: QWEN_ENDPOINT
               value: "http://qwen:8000"
             - name: CASSANDRA_HOST
@@ -82,6 +82,8 @@ spec:
               value: "3"
             - name: MIN_SOURCE_NODES
               value: "1"
+            - name: QWEN_MODEL
+              value: {{ .Values.qwen.model | quote }}
             - name: METRICS_PORT
               value: "9000"
           ports:

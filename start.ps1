@@ -63,7 +63,7 @@ try {
   Write-Host "Building rag-worker..." -ForegroundColor Green
 
   docker build -t localhost:5000/rag-worker:latest -f rag_worker/Dockerfile .
-  docker tag localhost:5000/rag-worker:latest rag-frontend:latest
+  docker tag localhost:5000/rag-worker:latest rag-worker:latest
 
   Write-Host "All Docker images built successfully and loaded into Minikube!" -ForegroundColor Green
 } catch {

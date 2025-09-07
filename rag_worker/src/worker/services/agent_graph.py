@@ -8,14 +8,13 @@ import re
 
 from langgraph.graph import StateGraph, END
 from rag_shared.config import (
-    CASSANDRA_HOSTS, CASSANDRA_KEYSPACE,
+    CASSANDRA_HOST, CASSANDRA_KEYSPACE,
     CASSANDRA_USERNAME, CASSANDRA_PASSWORD,
     EMBED_MODEL, DEFAULT_NAMESPACE,
     ROUTER_TOP_K,
 )
-from graph_rag_retrievers import make_graph_retriever_factory, TableNames
-from worker.services.qwen_llm import QwenLLM  # your existing LLM client
-
+from worker.services.graph_rag_retrievers import make_graph_retriever_factory, TableNames
+from worker.services.qwen_llm import QwenLLM
 # ---------- State ----------
 
 class AgentState(TypedDict, total=False):
@@ -109,7 +108,7 @@ class GraphAgent:
         self._progress_cb = progress_cb
 
         factory = make_graph_retriever_factory(
-            hosts=CASSANDRA_HOSTS,
+            hosts=CASSANDRA_HOST,
             keyspace=CASSANDRA_KEYSPACE,
             username=CASSANDRA_USERNAME,
             password=CASSANDRA_PASSWORD,

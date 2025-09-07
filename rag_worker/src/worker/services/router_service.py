@@ -6,7 +6,7 @@ from typing import Dict, List, Optional, Tuple
 
 from rag_shared.config import (
     ROUTER_TOP_K,
-    CASSANDRA_HOSTS, CASSANDRA_KEYSPACE,
+    CASSANDRA_HOST, CASSANDRA_KEYSPACE,
     CASSANDRA_USERNAME, CASSANDRA_PASSWORD,
     EMBED_MODEL, DEFAULT_NAMESPACE,
 )
