@@ -1,139 +1,218 @@
-import logging
-from typing import Dict, Optional, Any
+# worker/services/graph_orchestrator.py
+from __future__ import annotations
+import json
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple
 
-from llama_index.core import Settings, VectorStoreIndex
-from llama_index.core.response_synthesizers import TreeSummarize
-from llama_index.core.retrievers import VectorIndexRetriever
-from llama_index.core.query_engine import RouterQueryEngine, RetrieverQueryEngine
-from llama_index.core.tools import QueryEngineTool, ToolMetadata
-from llama_index.core.selectors import LLMSingleSelector
-from llama_index.core.base.base_query_engine import BaseQueryEngine
-from llama_index.core.base.response.schema import Response
-from langchain_huggingface import HuggingFaceEmbeddings
-from llama_index.core.callbacks import CallbackManager
 from rag_shared.config import (
     ROUTER_TOP_K,
-    EMBED_MODEL,
-    CODE_TABLE, PACKAGE_TABLE, PROJECT_TABLE,
+    CASSANDRA_HOSTS, CASSANDRA_KEYSPACE,
+    CASSANDRA_USERNAME, CASSANDRA_PASSWORD,
+    EMBED_MODEL, DEFAULT_NAMESPACE,
 )
 from worker.services.qwen_llm import QwenLLM
-from worker.services.cassandra_store import vector_store_for_table
+from graph_rag_retrievers import make_graph_retriever_factory, TableNames
 
-logger = logging.getLogger(__name__)
+# ----- Types -----
 
+Scope = str  # "project" | "package" | "file" | "code"
+SCOPE_TO_LEVEL = {
+    "project": "repo",   # L1
+    "package": "module", # L2
+    "file":    "file",   # L3
+    "code":    "chunk",  # L4
+}
+LEVEL_TO_SCOPE = {v: k for k, v in SCOPE_TO_LEVEL.items()}
 
-class DirectLLMQueryEngine(BaseQueryEngine):
-    """A minimal query engine that just uses the LLM without any retrieval."""
+@dataclass
+class RAGResult:
+    answer: str
+    scope: Scope
+    used_docs: List[Dict]  # [{block:int, repo:str, module:str, file_path:str, scope:str}]
+    debug: Dict
 
-    def __init__(self, callback_manager=None):
-        """Initialize the DirectLLMQueryEngine with optional callback manager."""
-        if callback_manager is None:
-            callback_manager = Settings.callback_manager
-        super().__init__(callback_manager=callback_manager)
+# ----- Orchestrator -----
 
-    def _get_prompt_modules(self) -> Dict[str, Any]:
-        """Return prompt modules used by this query engine."""
-        return {}
+class GraphRAGOrchestrator:
+    """
+    Native GraphRAG retrieval:
+      1) Scope judge (LLM) -> project/package/file/code
+      2) GraphRetriever for chosen scope (Cassandra + edges over metadata_s)
+      3) Optional stage-down (project->package->code) if the question is deep
+      4) Synthesize final answer from top-k blocks
+    """
 
-    def _query(self, query_bundle) -> Response:
-        """Internal query method required by BaseQueryEngine."""
-        query_str = str(query_bundle.query_str) if hasattr(query_bundle, 'query_str') else str(query_bundle)
-        text = Settings.llm.complete(query_str).text
-        return Response(text)
+    def __init__(self, namespace: Optional[str] = None):
+        self.llm = QwenLLM()
+        self.namespace = namespace or DEFAULT_NAMESPACE
 
-    async def _aquery(self, query_bundle) -> Response:
-        """Internal async query method required by BaseQueryEngine."""
-        query_str = str(query_bundle.query_str) if hasattr(query_bundle, 'query_str') else str(query_bundle)
-        if hasattr(Settings.llm, "acomplete"):
-            text = (await Settings.llm.acomplete(query_str)).text
+        # Build retrievers
+        factory = make_graph_retriever_factory(
+            hosts=CASSANDRA_HOSTS,
+            keyspace=CASSANDRA_KEYSPACE,     # "vector_store"
+            username=CASSANDRA_USERNAME,
+            password=CASSANDRA_PASSWORD,
+            tables=TableNames(
+                repo="embeddings_repo",
+                module="embeddings_module",
+                file="embeddings_file",
+                chunk="embeddings",
+            ),
+            embedding_model=EMBED_MODEL,      # matches ingestion
+        )
+        self.retrievers = {
+            "repo":   factory.for_repo(k=6, start_k=2, max_depth=2),
+            "module": factory.for_module(k=8, start_k=2, adjacent_k=6, max_depth=2),
+            "file":   factory.for_file(k=8, start_k=2, adjacent_k=6, max_depth=2),
+            "chunk":  factory.for_chunk(k=10, start_k=3, adjacent_k=8, max_depth=2),
+        }
+
+    # ---------- Public API ----------
+
+    def route(self, query: str, *, force_level: Optional[str] = None) -> RAGResult:
+        """
+        Main entrypoint. force_level ∈ {"project","package","file","code","none"}.
+        Returns RAGResult with synthesized answer and used document metadata.
+        """
+        # 1) decide scope
+        if force_level and force_level != "none":
+            scope = force_level
+        elif force_level == "none":
+            # Direct LLM only (no retrieval)
+            text = self.llm.complete(query).text
+            return RAGResult(answer=text, scope="none", used_docs=[], debug={"path":"llm-only"})
         else:
-            import asyncio
-            loop = asyncio.get_event_loop()
-            text = await loop.run_in_executor(None, lambda: Settings.llm.complete(query_str).text)
-        return Response(text)
+            scope = self._judge_scope(query)
 
-    def query(self, query_str: str, **kwargs: Any) -> Response:
-        # Keep the existing public interface
-        text = Settings.llm.complete(query_str).text
-        return Response(text)
+        level = SCOPE_TO_LEVEL.get(scope, "repo")  # default safe
+        base_filter = {"namespace": self.namespace} if self.namespace else {}
 
-    async def aquery(self, query_str: str, **kwargs: Any) -> Response:
-        # Keep the existing public interface
-        if hasattr(Settings.llm, "acomplete"):
-            text = (await Settings.llm.acomplete(query_str)).text
-        else:
-            import asyncio
-            loop = asyncio.get_event_loop()
-            text = await loop.run_in_executor(None, lambda: Settings.llm.complete(query_str).text)
-        return Response(text)
+        # 2) retrieve neighborhood at chosen level
+        docs = self._retrieve(level, query, base_filter)
 
-class RouterService:
-    def __init__(self):
-        # Initialize global LlamaIndex settings once
-        Settings.llm = QwenLLM()
-        Settings.embed_model = HuggingFaceEmbeddings(model_name=EMBED_MODEL)
+        # 3) zero/low-hit fallbacks and stage-down for deep questions
+        # Heuristic: if scope is high-level but query mentions a repo/module,
+        # or if the answer looks debugging-ish, drill down.
+        down_docs = []
+        down_chain = []
+        if level in ("repo", "module"):
+            hint = self._extract_filters_from_query(query)  # e.g., {"repo":"payments","module":"messaging"}
+            if hint:
+                base_filter |= hint
+            if level == "repo":
+                # stage-down to module
+                down_docs = self._retrieve("module", query, base_filter) or []
+                down_chain.append("repo→module")
+                # optionally stage-down again if it looks code-y
+                if self._looks_codey(query):
+                    base_filter2 = dict(base_filter)  # keep same scope filters
+                    down_docs2 = self._retrieve("chunk", query, base_filter2) or []
+                    if down_docs2:
+                        down_chain.append("module→chunk")
+                        down_docs.extend(down_docs2)
+            elif level == "module" and self._looks_codey(query):
+                down_docs = self._retrieve("chunk", query, base_filter) or []
+                down_chain.append("module→chunk")
 
-        # Build per-level engines
-        self._engines: Dict[str, RetrieverQueryEngine] = {}
-        self._build_level_engine("code", CODE_TABLE)
-        self._build_level_engine("package", PACKAGE_TABLE)
-        self._build_level_engine("project", PROJECT_TABLE)
+        # 4) merge & cap context
+        merged = (docs or []) + down_docs
+        ctx_docs = merged[:ROUTER_TOP_K] if merged else []
+        formatted_ctx, sources = self._format_context(ctx_docs)
 
-        # Direct LLM engine (no RAG)
-        self._direct_engine = DirectLLMQueryEngine()
+        # 5) synthesize answer
+        sys_instructions = (
+            "You are a senior developer assistant. Use only the provided context blocks when making claims.\n"
+            "If you cite files/modules, reference the block numbers like [1], [2]. "
+            "If context is insufficient, say so and suggest the next repo/module to inspect."
+        )
+        prompt = f"{sys_instructions}\n\nQuestion: {query}\n\nContext:\n{formatted_ctx}\n\nAnswer:"
+        try:
+            text = self.llm.complete(prompt).text
+        except Exception as e:
+            text = f"(LLM error) {e}"
 
-        # Router tools
-        tools = [
-            QueryEngineTool(
-                query_engine=self._direct_engine,
-                metadata=ToolMetadata(
-                    name="no_rag",
-                    description="General questions, chit-chat, or anything not about the codebase.",
-                ),
-            ),
-            QueryEngineTool(
-                query_engine=self._engines["code"],
-                metadata=ToolMetadata(
-                    name="code",
-                    description="Fine-grained code/symbol/file questions.",
-                ),
-            ),
-            QueryEngineTool(
-                query_engine=self._engines["package"],
-                metadata=ToolMetadata(
-                    name="package",
-                    description="Module/package-level behaviors/APIs.",
-                ),
-            ),
-            QueryEngineTool(
-                query_engine=self._engines["project"],
-                metadata=ToolMetadata(
-                    name="project",
-                    description="Repo-wide architecture and patterns.",
-                ),
-            ),
-        ]
-
-        selector = LLMSingleSelector.from_defaults()
-        self._router = RouterQueryEngine(
-            selector=selector,
-            query_engine_tools=tools,
+        return RAGResult(
+            answer=text,
+            scope=scope,
+            used_docs=sources,
+            debug={
+                "level": level,
+                "fallbacks": down_chain,
+                "base_filter": base_filter,
+                "ctx_count": len(ctx_docs),
+            },
         )
 
-    def _build_level_engine(self, level: str, table: str) -> None:
-        vstore = vector_store_for_table(table)
-        index = VectorStoreIndex.from_vector_store(vstore)
-        retriever = VectorIndexRetriever(index=index, similarity_top_k=ROUTER_TOP_K)
-        synth = TreeSummarize(verbose=False)
-        engine = RetrieverQueryEngine(retriever=retriever, response_synthesizer=synth)
-        self._engines[level] = engine
+    # ---------- Internals ----------
 
-    def route(self, query: str, *, force_level: Optional[str] = None) -> Response:
-        """Route the query to the right engine. If force_level is provided, bypass routing."""
-        if force_level:
-            if force_level == "none":
-                return self._direct_engine.query(query)
-            if force_level not in self._engines:
-                raise ValueError(f"Unknown force_level: {force_level}")
-            return self._engines[force_level].query(query)
-        return self._router.query(query)
+    def _judge_scope(self, query: str) -> Scope:
+        """
+        Ask the LLM to pick one of: project | package | file | code
+        and (optionally) surface repo/module hints. Falls back to heuristics.
+        """
+        sys = (
+            "Choose the best search scope for the user's question about a codebase. "
+            "Return JSON with fields: scope that exists in {project, package, file, code}, "
+            "and optional filters {repo, module}. Keep it compact."
+        )
+        ex = 'Example output: {"scope":"package","filters":{"repo":"payments","module":"messaging"}}'
+        msg = f"{sys}\nQuestion: {query}\n{ex}\nJSON:"
+        try:
+            raw = self.llm.complete(msg).text.strip()
+            raw = raw[raw.find("{"): raw.rfind("}")+1]  # crude guard
+            data = json.loads(raw)
+            scope = data.get("scope") or "project"
+        except Exception:
+            scope = self._heuristic_scope(query)
+        return scope
+
+    def _heuristic_scope(self, q: str) -> Scope:
+        ql = q.lower()
+        if any(k in ql for k in ("how do i", "architecture", "what repos", "overall", "component")):
+            return "project"
+        if any(k in ql for k in ("package", "module", "subsystem", "service ")):
+            return "package"
+        if any(k in ql for k in ("file ", ".py", ".java", "src/", "file:", "path:", "stacktrace", "traceback")):
+            return "file"
+        return "code"
+
+    def _extract_filters_from_query(self, q: str) -> Dict[str, str]:
+        # super simple hints; you can expand with regex on repo/module names
+        out: Dict[str, str] = {}
+        ql = q.lower()
+        # e.g., "in payments-processor", "repo payments-processor"
+        for key in ("repo", "repository"):
+            if key in ql:
+                # naive token grab; replace with better NER if needed
+                toks = ql.split()
+                try:
+                    idx = toks.index(key)
+                    out["repo"] = toks[idx+1].strip(",.")
+                except Exception:
+                    pass
+        return out
+
+    def _looks_codey(self, q: str) -> bool:
+        ql = q.lower()
+        signals = ("error", "stacktrace", "traceback", "exception", "class ", "function ", "method ",
+                   "nullpointer", "undefined", "segfault", "timeout", "retry", "reconnect", "activemq", "jms")
+        return any(s in ql for s in signals)
+
+    def _retrieve(self, level: str, query: str, base_filter: Dict[str, str]):
+        retriever = self.retrievers[level]
+        return retriever.invoke(query, filter=base_filter) or []
+
+    def _format_context(self, docs) -> Tuple[str, List[Dict]]:
+        blocks: List[str] = []
+        srcs: List[Dict] = []
+        for i, d in enumerate(docs, start=1):
+            md = getattr(d, "metadata", {}) or {}
+            scope = md.get("scope") or LEVEL_TO_SCOPE.get(md.get("level",""), "")
+            repo = md.get("repo","")
+            module = md.get("module","")
+            fpath = md.get("file_path","")
+            text = getattr(d, "page_content", "") or getattr(d, "text", "")
+            blocks.append(f"[{i}] scope={scope} repo={repo} module={module} file={fpath}\n{text[:2000]}")
+            srcs.append({"block": i, "scope": scope, "repo": repo, "module": module, "file_path": fpath})
+        return "\n\n".join(blocks) if blocks else "(no context)", srcs
+

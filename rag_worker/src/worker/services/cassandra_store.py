@@ -27,3 +27,13 @@ def vector_store_for_table(table: str) -> CassandraVectorStore:
         embedding_dimension=EMBED_DIM,
         keyspace=CASSANDRA_KEYSPACE,
     )
+
+
+def _make_store(self, table_name: str) -> LCCassandra:
+    # IMPORTANT: do NOT pass metadata_indexing=... because your tables only have metadata_s MAP<TEXT,TEXT>
+    return LCCassandra(
+        embedding=self._emb,
+        session=self.get_session(),
+        keyspace=self.cfg.conn.keyspace,
+        table_name=table_name,
+    )
