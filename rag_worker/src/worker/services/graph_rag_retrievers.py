@@ -85,19 +85,19 @@ class GraphRetrieverFactory:
         Edges tell GraphRetriever which metadata fields define connectivity.
         We traverse by shared values of these keys.
 
-        - repo scope: mostly high-level hops by namespace/repo/topics
-        - module scope: tighten to repo/module/topics
-        - file scope: repo/module/file_path/topics
-        - code/chunk scope: include file_path for chunk↔file clustering
+        - project scope: namespace/repo (matches embeddings_repo schema)
+        - package scope: namespace/repo/module (matches embeddings_module schema)
+        - file scope: namespace/repo/module/file_path (matches embeddings_file schema)
+        - code/chunk scope: namespace/repo/module/file_path (matches embeddings schema)
         """
         if scope == "project":
-            return [("namespace", "namespace"), ("repo", "repo"), ("topics", "topics")]
+            return [("namespace", "namespace"), ("repo", "repo")]
         if scope == "package":
-            return [("namespace", "namespace"), ("repo", "repo"), ("module", "module"), ("topics", "topics")]
+            return [("namespace", "namespace"), ("repo", "repo"), ("module", "module")]
         if scope == "file":
-            return [("namespace", "namespace"), ("repo", "repo"), ("module", "module"), ("file_path", "file_path"), ("topics", "topics")]
+            return [("namespace", "namespace"), ("repo", "repo"), ("module", "module"), ("file_path", "file_path")]
         # "code"
-        return [("namespace", "namespace"), ("repo", "repo"), ("module", "module"), ("file_path", "file_path"), ("topics", "topics")]
+        return [("namespace", "namespace"), ("repo", "repo"), ("module", "module"), ("file_path", "file_path")]
 
     # --------- public builders (return LangChain retrievers) ---------
 
@@ -133,7 +133,6 @@ class GraphRetrieverFactory:
             strategy=Eager(k=k, start_k=start_k, adjacent_k=adjacent_k, max_depth=max_depth),
         )
 
-    # Optional: if you want to close cleanly in tests
     def close(self):
         try:
             self._session.shutdown()

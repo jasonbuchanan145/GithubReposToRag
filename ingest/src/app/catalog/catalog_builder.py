@@ -127,7 +127,14 @@ def make_catalog_document(
         "component_kind": component_kind,
         "generated_from_code_summaries": bool(code_nodes and llm),
     }
-    return Document(text=catalog_text, metadata=meta)
+    # Create Document with proper metadata handling for downstream processing
+    return Document(
+        text=catalog_text, 
+        metadata=meta,
+        # Ensure metadata is accessible for downstream processing
+        metadata_template="{key}: {value}",
+        text_template="Metadata: {metadata_str}\n\nContent: {content}",
+    )
 
 
 def _generate_catalog_from_code_summaries(repo: str, code_nodes: List, llm: CustomLLM) -> str:

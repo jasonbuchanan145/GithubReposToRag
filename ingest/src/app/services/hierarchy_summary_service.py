@@ -1,4 +1,3 @@
-# app/services/hierarchy_summary_service.py
 from __future__ import annotations
 import logging
 from typing import List, Any
@@ -42,6 +41,10 @@ class HierarchySummaryService:
                 logging.exception(f"File summary LLM failed for {file_path}: {e}")
                 text = f"{file_path} summary unavailable."
 
+            # Track which chunks/nodes this file summary rolls up
+            constituent_node_ids = [n.node_id for n in nodes if hasattr(n, 'node_id') and n.node_id]
+
+            # Create Document with proper metadata handling for downstream processing
             doc = Document(
                 text=text,
                 metadata={
@@ -52,7 +55,12 @@ class HierarchySummaryService:
                     "module": top_directory(file_path, depth=1),
                     "component_kind": component_kind,
                     "doc_type": "file",   # controller will normalize scope later
+                    "rollup_of": constituent_node_ids,  # Track constituent chunks
+                    "rollup_count": len(constituent_node_ids),
                 },
+                # Ensure metadata is accessible for downstream processing
+                metadata_template="{key}: {value}",
+                text_template="Metadata: {metadata_str}\n\nContent: {content}",
             )
             file_summary_docs.append(doc)
 
@@ -84,12 +92,22 @@ class HierarchySummaryService:
         module_map = group_files_by_module(list(file_summaries.keys()), depth=depth)
         logging.info(f"📦 Creating module summaries for {len(module_map)} modules")
 
+        # Build mapping of file_path to file_node_id for tracking rollups
+        file_path_to_node_id = {}
+        for n in file_nodes:
+            fp = (n.metadata.get("file_path") or "").strip()
+            if fp and hasattr(n, 'node_id') and n.node_id:
+                file_path_to_node_id[fp] = n.node_id
+
         module_docs: List[Document] = []
         for module, files in module_map.items():
             if not module:
                 continue
             selected = files[:max_files_per_module]
             joined = "\n\n".join([file_summaries[fp] for fp in selected if fp in file_summaries])[:25000]
+
+            # Track which file nodes this module summary rolls up
+            constituent_file_node_ids = [file_path_to_node_id[fp] for fp in selected if fp in file_path_to_node_id]
 
             prompt = (
                 f"MODULE SUMMARY for '{module}' in repo {repo}.\n"
@@ -102,6 +120,7 @@ class HierarchySummaryService:
                 logging.exception(f"Module summary LLM failed for {module}: {e}")
                 text = f"{module} module summary unavailable."
 
+            # Create Document with proper metadata handling for downstream processing
             doc = Document(
                 text=text,
                 metadata={
@@ -111,7 +130,13 @@ class HierarchySummaryService:
                     "module": module,
                     "component_kind": component_kind,
                     "doc_type": "module",
+                    "rollup_of": constituent_file_node_ids,  # Track constituent file nodes
+                    "rollup_count": len(constituent_file_node_ids),
+                    "constituent_files": selected,  # Also keep file paths for debugging
                 },
+                # Ensure metadata is accessible for downstream processing
+                metadata_template="{key}: {value}",
+                text_template="Metadata: {metadata_str}\n\nContent: {content}",
             )
             module_docs.append(doc)
 
@@ -136,8 +161,13 @@ class HierarchySummaryService:
         readmes = [d.text for d in transformed_docs if (d.metadata.get("file_path", "").lower().endswith("readme.md"))]
         readmes = readmes[:readme_limit]
 
-        module_snips = [(mn.get_content(metadata_mode="none") or "") for mn in module_nodes][:module_limit]
+        selected_modules = module_nodes[:module_limit]
+        module_snips = [(mn.get_content(metadata_mode="none") or "") for mn in selected_modules]
         seeds = "\n\n".join(readmes + module_snips)[:25000]
+
+        # Track which module nodes this repo summary rolls up
+        constituent_module_node_ids = [mn.node_id for mn in selected_modules if hasattr(mn, 'node_id') and mn.node_id]
+        constituent_module_names = [mn.metadata.get("module", "") for mn in selected_modules if mn.metadata.get("module")]
 
         prompt = (
             f"REPO OVERVIEW for {repo}:\n"
@@ -150,6 +180,7 @@ class HierarchySummaryService:
             logging.exception(f"Repo overview LLM failed for {repo}: {e}")
             overview_text = f"{repo}: overview unavailable."
 
+        # Create Document with proper metadata handling for downstream processing
         repo_doc = Document(
             text=overview_text,
             metadata={
@@ -158,7 +189,13 @@ class HierarchySummaryService:
                 "branch": branch,
                 "component_kind": component_kind,
                 "doc_type": "repo",
+                "rollup_of": constituent_module_node_ids,  # Track constituent module nodes
+                "rollup_count": len(constituent_module_node_ids),
+                "constituent_modules": constituent_module_names,  # Also keep module names for debugging
             },
+            # Ensure metadata is accessible for downstream processing
+            metadata_template="{key}: {value}",
+            text_template="Metadata: {metadata_str}\n\nContent: {content}",
         )
         repo_nodes = list(build_catalog_pipeline(llm=llm).run(documents=[repo_doc]))
         logging.info(f"🏷  Repo overview pipeline produced {len(repo_nodes)} nodes")

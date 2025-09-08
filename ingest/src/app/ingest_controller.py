@@ -320,25 +320,25 @@ def ingest_component(
     with stage_timer("module_summaries", repo=repo, namespace=namespace, branch=branch, run_id=str(run_id)):
         stream_step("build_module_summaries")
         module_nodes = HierarchySummaryService.build_module_nodes(
-                file_nodes=file_nodes,
-                repo=repo,
-                namespace=namespace,
-                branch=branch,
-                component_kind=kind,
-                llm=qwen_llm,
-            )
+            file_nodes=file_nodes,
+            repo=repo,
+            namespace=namespace,
+            branch=branch,
+            component_kind=kind,
+            llm=qwen_llm,
+        )
         _attach_common_metadata(
-                module_nodes,
-                namespace=namespace,
-                repo=repo,
-                branch=branch,
-                collection=collection,
-                component_kind=kind,
-                is_standalone=is_standalone,
-                run_id=run_id,
-                dev_forced=force,
-                doc_type="module",        # scope => "module"
-            )
+            module_nodes,
+            namespace=namespace,
+            repo=repo,
+            branch=branch,
+            collection=collection,
+            component_kind=kind,
+            is_standalone=is_standalone,
+            run_id=run_id,
+            dev_forced=force,
+            doc_type="module",        # scope => "module"
+        )
     with stage_timer("repo_summaries", repo=repo, namespace=namespace, branch=branch, run_id=str(run_id)):
         stream_step("build_repo_overview")
         repo_nodes = HierarchySummaryService.build_repo_nodes(
@@ -418,7 +418,7 @@ def ingest_component(
 
             session.execute(
                 """
-                INSERT INTO ingest_runs (run_id, namespace, repo, branch, collection, component_kind, started_at, finished_at, node_count) 
+                INSERT INTO ingest_runs (run_id, namespace, repo, branch, collection, component_kind, started_at, finished_at, node_count)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [

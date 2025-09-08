@@ -18,7 +18,6 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from app.config import SETTINGS
 
 try:
-    # Optional: shared default if your SETTINGS lacks an embed model
     from rag_shared.config import EMBED_MODEL as DEFAULT_EMBED_MODEL
 except Exception:
     DEFAULT_EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
@@ -183,8 +182,6 @@ class CassandraService:
     ) -> CassandraVectorStoreAdapter:
         """
         Return a vector store bound to the given table (created if needed).
-        Backwards compatible: you may pass a session explicitly, or rely on the
-        one established by connect().
         """
         sess = session or self.session
         if sess is None:

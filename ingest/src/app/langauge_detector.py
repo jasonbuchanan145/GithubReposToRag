@@ -30,7 +30,6 @@ def detect_language_from_extension(file_path):
         '.yml': 'yaml',
         '.md': 'markdown',
         '.dockerfile': 'dockerfile',
-        # Jupyter notebooks are typically Python-based
         '.ipynb': 'python'
     }
 
