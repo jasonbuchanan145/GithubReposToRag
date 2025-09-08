@@ -68,6 +68,10 @@ spec:
               value: "{{ .Values.cassandra.auth.password }}"
             - name: CASSANDRA_KEYSPACE
               value: "vector_store"
+            - name: PUSHGATEWAY_ADDRESS
+              value: "{{ printf "%s:%v" .Values.metrics.prometheus_gateway.host .Values.metrics.prometheus_gateway.port }}"
+
+
             - name: GITHUB_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -78,6 +82,10 @@ spec:
                 configMapKeyRef:
                   name: {{ .Release.Name }}-github-config
                   key: GITHUB_USER
+            - name: QWEN_MODEL
+              value: {{ .Values.qwen.model | quote }}
+            - name: ALLOW_THINKING
+              value: {{ .Values.ingestjob.allowThinking | quote}}
             {{- if .Values.sharedData.enabled }}
             - name: DATA_DIR
               value: "{{ .Values.sharedData.mountPath }}"

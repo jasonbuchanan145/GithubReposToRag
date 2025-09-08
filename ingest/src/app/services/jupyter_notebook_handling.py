@@ -10,7 +10,7 @@ from cassandra.cluster import Cluster
 # LlamaIndex imports
 from llama_index.core import Settings
 # Remove the problematic StreamingResponse import - we'll create our own simple implementation
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+from langchain_huggingface import HuggingFaceEmbeddings
 from llama_index.readers.github import GithubRepositoryReader, GithubClient
 from nbconvert.filters import strip_ansi
 

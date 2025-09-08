@@ -5,11 +5,12 @@ import os
 import re
 from typing import Any
 
-# Fix the import - use the correct module path
 from llama_index.core.llms.callbacks import llm_completion_callback
 from llama_index.core.llms import CustomLLM, CompletionResponse, LLMMetadata
 import requests
 from llama_index.core import Settings
+from langchain_huggingface import HuggingFaceEmbeddings
+import rag_shared.config
 from rag_shared.config import QWEN_MODEL
 
 from app import config
@@ -19,14 +20,11 @@ from app import config
 # -----------------------
 QWEN_BASE_URL = os.getenv("QWEN_BASE_URL", "").rstrip("/")
 USE_CHAT_ENDPOINT = os.getenv("QWEN_USE_CHAT", "true").lower() == "true"
-ALLOW_THINKING = os.getenv("INGEST_ALLOW_THINKING", "true").lower() == "true"
-FINAL_ONLY_INSTRUCTION = os.getenv("INGEST_FINAL_ONLY", "true").lower() == "true"
+ALLOW_THINKING = os.getenv("ALLOW_THINKING", "true").lower() == "true"
 LOG_RAW = os.getenv("QWEN_LOG_RAW", "false").lower() == "true"
 
 
 def _final_only_system_msg() -> str:
-    if not FINAL_ONLY_INSTRUCTION:
-        return ""
     return (
         "You are a metadata writer for an indexing pipeline. "
         "Return ONLY the final answer requested by the prompt. "
@@ -53,9 +51,9 @@ def _sanitize(text: str) -> str:
 class QwenLLM(CustomLLM):
     """Custom LLM implementation for Qwen model in ingest service (soft suppression)."""
 
-    model_name: QWEN_MODEL
+    model_name: str = QWEN_MODEL
     context_window: int = 11712
-    num_output: int = 1024
+    num_output: int = 2048
 
     @property
     def metadata(self) -> LLMMetadata:
@@ -111,7 +109,7 @@ class QwenLLM(CustomLLM):
             "model": self.model_name,
             "messages": messages,
             "max_tokens": kwargs.get("max_tokens", self.num_output),
-            "temperature": kwargs.get("temperature", 0.2 if FINAL_ONLY_INSTRUCTION else 0.7),
+            "temperature": kwargs.get("temperature", 0.5),
             "top_p": kwargs.get("top_p", 0.9),
         }
 
@@ -151,7 +149,7 @@ class QwenLLM(CustomLLM):
             "model": self.model_name,
             "prompt": self._maybe_inject_instruction(prompt),
             "max_tokens": kwargs.get("max_tokens", self.num_output),
-            "temperature": kwargs.get("temperature", 0.2 if FINAL_ONLY_INSTRUCTION else 0.7),
+            "temperature": kwargs.get("temperature", 0.2),
             "top_p": kwargs.get("top_p", 0.9),
         }
 
@@ -179,8 +177,6 @@ class QwenLLM(CustomLLM):
 
     # When using /v1/chat/completions, we can still bias the model away from prefaces:
     def _maybe_inject_instruction(self, prompt: str) -> str:
-        if not FINAL_ONLY_INSTRUCTION:
-            return prompt
         return (
                 "Return ONLY the final answer requested. "
                 "No internal reasoning, no preface, no meta commentary.\n\n"
@@ -193,8 +189,8 @@ def initialize_llm_settings():
     logging.info(f"🔧 Initializing LLM settings for ingest service...")
     try:
         logging.info(f"🔗 Qwen endpoint: {getattr(config.SETTINGS.qwen_endpoint, 'qwen_endpoint', QWEN_BASE_URL)}")
-        logging.info(f"📝 Embedding model: {config.SETTINGS.embed_model}")
-        embed_model = HuggingFaceEmbedding(model_name=config.SETTINGS.embed_model)
+        logging.info(f"📝 Embedding model: {rag_shared.config.EMBED_MODEL}")
+        embed_model = HuggingFaceEmbeddings(model_name=rag_shared.config.EMBED_MODEL)
     except Exception:
         embed_model = None
         logging.warning("Embedding model not initialized here (using existing global config).")

@@ -1,0 +1,102 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cassandra-initdb
+  namespace: rag
+data:
+  00_schema.cql: |
+    CREATE KEYSPACE IF NOT EXISTS vector_store
+    WITH REPLICATION = {'class':'SimpleStrategy','replication_factor':1};
+
+    USE vector_store;
+
+    -- ==== L0: Catalog ====
+    CREATE TABLE IF NOT EXISTS embeddings_catalog (
+         row_id          TEXT PRIMARY KEY,
+         attributes_blob TEXT,
+         body_blob       TEXT,
+         vector          VECTOR<FLOAT, 384>,
+         metadata_s      MAP<TEXT, TEXT>
+    );
+
+    CREATE CUSTOM INDEX IF NOT EXISTS eidx_metadata_s_embeddings_catalog
+        ON embeddings_catalog (entries(metadata_s))
+        USING 'org.apache.cassandra.index.sai.StorageAttachedIndex';
+
+    CREATE CUSTOM INDEX IF NOT EXISTS idx_vector_embeddings_catalog
+        ON embeddings_catalog (vector)
+        USING 'org.apache.cassandra.index.sai.StorageAttachedIndex'
+                WITH OPTIONS = {'similarity_function':'cosine'};
+
+    -- ==== L1: REPO ====
+    CREATE TABLE IF NOT EXISTS embeddings_repo (
+    row_id          TEXT PRIMARY KEY,
+    attributes_blob TEXT,
+    body_blob       TEXT,
+    vector          VECTOR<FLOAT, 384>,
+    metadata_s      MAP<TEXT, TEXT>
+    );
+
+    CREATE CUSTOM INDEX IF NOT EXISTS eidx_metadata_s_embeddings_repo
+    ON embeddings_repo (entries(metadata_s))
+    USING 'org.apache.cassandra.index.sai.StorageAttachedIndex';
+
+    CREATE CUSTOM INDEX IF NOT EXISTS idx_vector_embeddings_repo
+    ON embeddings_repo (vector)
+    USING 'org.apache.cassandra.index.sai.StorageAttachedIndex'
+    WITH OPTIONS = {'similarity_function':'cosine'};
+
+    -- ==== L2: MODULE ====
+    CREATE TABLE IF NOT EXISTS embeddings_module (
+    row_id          TEXT PRIMARY KEY,
+    attributes_blob TEXT,
+    body_blob       TEXT,
+    vector          VECTOR<FLOAT, 384>,
+    metadata_s      MAP<TEXT, TEXT>
+    );
+
+    CREATE CUSTOM INDEX IF NOT EXISTS eidx_metadata_s_embeddings_module
+    ON embeddings_module (entries(metadata_s))
+    USING 'org.apache.cassandra.index.sai.StorageAttachedIndex';
+
+    CREATE CUSTOM INDEX IF NOT EXISTS idx_vector_embeddings_module
+    ON embeddings_module (vector)
+    USING 'org.apache.cassandra.index.sai.StorageAttachedIndex'
+    WITH OPTIONS = {'similarity_function':'cosine'};
+
+    -- ==== L3: FILE ====
+    CREATE TABLE IF NOT EXISTS embeddings_file (
+    row_id          TEXT PRIMARY KEY,
+    attributes_blob TEXT,
+    body_blob       TEXT,
+    vector          VECTOR<FLOAT, 384>,
+    metadata_s      MAP<TEXT, TEXT>
+    );
+
+    CREATE CUSTOM INDEX IF NOT EXISTS eidx_metadata_s_embeddings_file
+    ON embeddings_file (entries(metadata_s))
+    USING 'org.apache.cassandra.index.sai.StorageAttachedIndex';
+
+    CREATE CUSTOM INDEX IF NOT EXISTS idx_vector_embeddings_file
+    ON embeddings_file (vector)
+    USING 'org.apache.cassandra.index.sai.StorageAttachedIndex'
+    WITH OPTIONS = {'similarity_function':'cosine'};
+
+    -- ==== L4: CHUNK
+    CREATE TABLE IF NOT EXISTS embeddings (
+    row_id          TEXT PRIMARY KEY,
+    attributes_blob TEXT,
+    body_blob       TEXT,
+    vector          VECTOR<FLOAT, 384>,
+    metadata_s      MAP<TEXT, TEXT>
+    );
+
+
+    CREATE CUSTOM INDEX IF NOT EXISTS eidx_metadata_s_embeddings
+    ON embeddings (entries(metadata_s))
+    USING 'org.apache.cassandra.index.sai.StorageAttachedIndex';
+
+    CREATE CUSTOM INDEX IF NOT EXISTS idx_vector_embeddings
+    ON embeddings (vector)
+    USING 'org.apache.cassandra.index.sai.StorageAttachedIndex'
+    WITH OPTIONS = {'similarity_function':'cosine'};

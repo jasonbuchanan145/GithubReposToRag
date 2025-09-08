@@ -1,11 +1,12 @@
+[CmdletBinding(PositionalBinding = $false)]
+param(
+    [Parameter(Mandatory)]
+    [string]$GithubUser
+)
+
 # Stage 1 – prep
 # Stop on any non-handled error and enable strict mode
 $ErrorActionPreference = 'Stop'
-
-# Parse command line parameters
-param(
-    [string]$GithubUser
-)
 
 # Handle GitHub user parameter
 if (-not $GithubUser) {
@@ -60,14 +61,14 @@ try {
   docker tag localhost:5000/rag-api:latest rag-api:latest
 
   Write-Host "Building rag-worker..." -ForegroundColor Green
-  Push-Location frontend/nextjs-app
-  docker build -t localhost:5000/rag-frontend:latest -f Dockerfile .
-  docker tag localhost:5000/rag-frontend:latest rag-frontend:latest
+
+  docker build -t localhost:5000/rag-worker:latest -f rag_worker/Dockerfile .
+  docker tag localhost:5000/rag-worker:latest rag-worker:latest
 
   Write-Host "All Docker images built successfully and loaded into Minikube!" -ForegroundColor Green
 } catch {
   Write-Host "Docker build failed: $($_.Exception.Message)" -ForegroundColor Red
-  Write-Host "Continuing without some images - you can build them separately later" -ForegroundColor Yellow
+  exit 1
 }
 
 # Stage 3 – deploy
@@ -347,8 +348,5 @@ if (-not $ready) {
 } else {
   Write-Host "Cassandra is ready!" -ForegroundColor Green
 }
-
-# Port-forward in background
-Write-Host "Starting port forwarding..."
 
 Write-Host "Deployment completed! In order to access from your host machine please run `minikube services --all -n rag" -ForegroundColor Green

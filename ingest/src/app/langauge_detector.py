@@ -30,7 +30,6 @@ def detect_language_from_extension(file_path):
         '.yml': 'yaml',
         '.md': 'markdown',
         '.dockerfile': 'dockerfile',
-        # Jupyter notebooks are typically Python-based
         '.ipynb': 'python'
     }
 
@@ -91,7 +90,6 @@ def create_code_splitter_safely(file_path=None, language=None, document_content=
                 if detected_language:
                     language = detected_language
                 else:
-                    # Fallback to generic text splitter for unknown file types
                     from llama_index.core.node_parser import SentenceSplitter
                     return SentenceSplitter(
                         chunk_size=4000,
@@ -108,7 +106,7 @@ def create_code_splitter_safely(file_path=None, language=None, document_content=
         # Try to create CodeSplitter with the determined language
         code_splitter = CodeSplitter(
             language=language,
-            chunk_lines=100,  # Reasonable default for code chunks
+            chunk_lines=200,
             chunk_lines_overlap=10,
             max_chars=4000
         )

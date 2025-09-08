@@ -1,8 +1,3 @@
-# Default values for helm.
-# This is a YAML-formatted file.
-# Declare variables to be passed into your templates.
-
-# This will set the replicaset count more information can be found here: https://kubernetes.io/docs/concepts/workloads/controllers/replicaset/
 replicaCount: 1
 
 cassandra:
@@ -66,11 +61,10 @@ cassandra:
   service:
     ports:
       cql: 9042
-  # Disabled completely - we'll create this separately
-  initDBConfigMap: null
+  initDBConfigMap: "cassandra-initdb"
 
 qwen:
-  model: "Qwen/Qwen2.5-3B-Instruct"
+  model: "Qwen/Qwen2.5-Coder-7B-Instruct-AWQ"
   gpu: true
   # Increase GPU memory utilization to fit larger KV cache
   gpuMemoryUtilization: 0.85
@@ -83,6 +77,7 @@ image:
 ingestjob:
   image: rag-ingest:latest
   imagePullPolicy: Never
+  allowThinking: false
 
 ragapi:
   image: rag-api:latest
@@ -133,14 +128,17 @@ imagePullSecrets: []
 # This is to override the chart name.
 nameOverride: ""
 fullnameOverride: ""
-
-# Prometheus chart values (minimal)
+metrics:
+  prometheus_gateway:
+    host: rag-demo-prometheus-pushgateway
+    port: 9091
+# Prometheus chart values
 prometheus:
   enabled: true
   alertmanager:
     enabled: false
   pushgateway:
-    enabled: false
+    enabled: true
   server:
     # Use NodePort=false (ClusterIP); we access via kubectl port-forward if needed
     service:
